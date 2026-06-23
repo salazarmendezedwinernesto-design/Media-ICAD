@@ -4,7 +4,7 @@ import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
 
 const SOCKET_URL = SERVER_URL;
-const DESTINATARIOS_PANTALLA = ["Director", "Pastor"];
+const DESTINATARIOS_PANTALLA = ["Director", "Pastor", "Lider"];
 
 const FRASE_RAPIDAS_PANTALLA = [
   "Listo en Proyección",

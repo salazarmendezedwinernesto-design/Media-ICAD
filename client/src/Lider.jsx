@@ -8,6 +8,7 @@ const SOCKET_URL = SERVER_URL;
 const DESTINATARIOS_LIDER = [
   "Director",
   "Pastor",
+  "Pantalla",
   "C1",
   "C2",
   "C3",

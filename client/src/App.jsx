@@ -5,7 +5,7 @@ import Pastor from "./Pastor";
 import Pantalla from "./Pantalla";
 import Lider from "./Lider"; // Importamos el nuevo panel de líder
 import Login from "./Login";
-import { obtenerToken, borrarToken } from "./auth";
+import { obtenerToken, borrarToken } from "./services/auth";
 
 export default function App() {
   const [autenticado, setAutenticado] = useState(() => !!obtenerToken());

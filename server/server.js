@@ -1,3 +1,17 @@
+const express = require("express");
+const cors = require("cors"); // Importas el paquete
+const app = express();
+
+// Configuración de CORS
+app.use(
+  cors({
+    origin: ["https://nexus-appweb.vercel.app/"], // <-- Verifica que esta sea tu URL de Vercel
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  }),
+);
+
+app.use(express.json());
 require("dotenv").config(); // Carga las variables del .env al principio
 const express = require("express");
 const crypto = require("crypto");

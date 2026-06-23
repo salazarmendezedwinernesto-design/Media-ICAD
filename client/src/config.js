@@ -6,4 +6,4 @@
 // se sirven desde el mismo dominio, puedes dejarlo como cadena vacía ""
 // para que use automáticamente el mismo origen donde está cargada la página.
 
-export const SERVER_URL = "http://192.168.1.12:3000";
+export const SERVER_URL = "https://crew-media.onrender.com";

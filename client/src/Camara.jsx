@@ -104,7 +104,7 @@ export default function Camara({ numero, alSalir }) {
       if (responderA === "Pastor" || responderA === "Lider") {
         socketRef.current.emit("enviar_mensaje_a_pastor", {
           de: `Camara ${numero}`,
-          texto: `[Resp a ${responderA.toUpperCase()}]: ${texto.trim()}`,
+          texto: `Respuesta a ${responderA}: ${texto.trim()}`,
           destinatarios: [responderA],
           id: Date.now(),
         });

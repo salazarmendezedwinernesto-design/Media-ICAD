@@ -142,10 +142,9 @@ export default function Director({ alSalir }) {
       if (!esParaMi) return;
 
       // 1. Mensajes que vienen desde el panel de Pantalla
-      if (datos.texto && datos.texto.startsWith("[De Pantalla]:")) {
-        const textoLimpio = datos.texto.replace("[De Pantalla]:", "").trim();
+      if (datos.de === "Pantalla / Proyección") {
         setMensajesDePantalla((prev) => [
-          { id: idMensaje, texto: textoLimpio },
+          { id: idMensaje, texto: datos.texto },
           ...prev,
         ]);
 

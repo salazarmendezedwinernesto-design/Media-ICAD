@@ -210,7 +210,7 @@ export default function Lider({ alSalir }) {
               mensajesRecibidos.map((msg) => (
                 <div key={msg.id} style={styles.msgItem}>
                   <div>
-                    <strong style={{ color: "#e67e22" }}>[{msg.de}]: </strong>
+                    <strong style={{ color: "#e67e22" }}>{msg.de}: </strong>
                     <span style={{ color: "#fff" }}>{msg.texto}</span>
                   </div>
                   <button

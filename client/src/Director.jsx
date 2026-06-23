@@ -77,6 +77,9 @@ export default function Director({ alSalir }) {
   const [mensajesDelLider, setMensajesDelLider] = useState([]);
   const [textoParaLider, setTextoParaLider] = useState("");
 
+  // Texto libre dedicado por cámara (uno independiente para cada una)
+  const [textosLibresCamara, setTextosLibresCamara] = useState({});
+
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -295,6 +298,18 @@ export default function Director({ alSalir }) {
       texto: textoAEnviar.trim(),
       id: Date.now(),
       destinatarios: ["Lider"],
+    });
+  };
+
+  // Manda un mensaje libre a UNA cámara específica, sin tocar su tally
+  // actual (reenvía el mismo estado que ya tenía).
+  const enviarMensajeLibreACamara = (numCamara, textoAEnviar) => {
+    if (!textoAEnviar || !textoAEnviar.trim() || !socketRef.current) return;
+    const estadoActual = estadosLocales[numCamara]?.estado || "standby";
+    socketRef.current.emit("enviar_orden_director", {
+      camara: numCamara,
+      estado: estadoActual,
+      mensaje: textoAEnviar.trim(),
     });
   };
 
@@ -1008,6 +1023,41 @@ export default function Director({ alSalir }) {
                         </button>
                       ))}
                     </div>
+
+                    {/* MENSAJE LIBRE DEDICADO A ESTA CÁMARA */}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        enviarMensajeLibreACamara(num, textosLibresCamara[num]);
+                        setTextosLibresCamara((prev) => ({
+                          ...prev,
+                          [num]: "",
+                        }));
+                      }}
+                      style={{ ...styles.formEnvioPastor, marginTop: "6px" }}
+                    >
+                      <input
+                        type="text"
+                        value={textosLibresCamara[num] || ""}
+                        onChange={(e) =>
+                          setTextosLibresCamara((prev) => ({
+                            ...prev,
+                            [num]: e.target.value,
+                          }))
+                        }
+                        placeholder={`Mensaje a CÁMARA ${num}...`}
+                        style={styles.inputPastorText}
+                      />
+                      <button
+                        type="submit"
+                        style={{
+                          ...styles.btnEnviarPastor,
+                          backgroundColor: "#0052cc",
+                        }}
+                      >
+                        OK
+                      </button>
+                    </form>
                   </div>
                 </div>
               );

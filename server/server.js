@@ -108,10 +108,7 @@ io.use((socket, next) => {
 const estadoCamaras = {};
 
 // Bus general de mensajería: lo usan Director, Cámara, Líder y Pantalla
-// para mandarse texto libre entre sí. Cada rol filtra en el cliente según
-// el array `destinatarios` (o ignora el mensaje si "de" es él mismo).
-// Se reenvía bajo los 3 nombres de evento que los distintos paneles
-// están escuchando, así no hay que tocar el código de React.
+// para mandarse texto libre entre sí. Valida destinatarios y emite solo a quienes les corresponde.
 function difundirMensajeBus(datos) {
   const mensaje = {
     de: datos.de || "Desconocido",
@@ -122,17 +119,45 @@ function difundirMensajeBus(datos) {
       : ["Todos"],
   };
 
-  io.emit("recibir_mensaje_pastor", mensaje);
-  io.emit("recibir_mensaje_pastor_en_director", mensaje);
-  io.emit("recibir_mensaje_general", mensaje);
+  // Emitir a los receptores válidos
+  const { destinatarios } = mensaje;
+  const esParaTodos = destinatarios.includes("Todos");
+
+  // Si es para Director, enviar a Director
+  if (esParaTodos || destinatarios.includes("Director")) {
+    io.emit("recibir_mensaje_pastor_en_director", mensaje);
+  }
+
+  // Si es para Pastor, enviar a Pastor
+  if (esParaTodos || destinatarios.includes("Pastor")) {
+    io.emit("recibir_mensaje_pastor", mensaje);
+  }
+
+  // Si es para Líder, enviar a Líder
+  if (esParaTodos || destinatarios.includes("Lider")) {
+    io.emit("recibir_mensaje_pastor", mensaje);
+  }
+
+  // Si es para Pantalla, enviar a Pantalla
+  if (esParaTodos || destinatarios.includes("Pantalla")) {
+    io.emit("recibir_mensaje_pastor", mensaje);
+  }
+
+  // Si incluye cámaras específicas
+  const camarasDestino = destinatarios.filter((d) => d.startsWith("C"));
+  if (camarasDestino.length > 0) {
+    io.emit("recibir_mensaje_general", mensaje);
+  }
 }
 
 io.on("connection", (socket) => {
   console.log(`Cliente conectado: ${socket.id} (usuario: ${socket.usuario})`);
 
   // Al conectarse, le mandamos al cliente el último estado conocido
-  // de todas las cámaras, por si necesita "pintar" su pantalla de entrada.
-  socket.emit("estado_inicial_camaras", estadoCamaras);
+  // de todas las cámaras, para que su interfaz se pinte correctamente.
+  Object.values(estadoCamaras).forEach((estado) => {
+    socket.emit("recibir_orden_camara", estado);
+  });
 
   // --- Director -> Cámara individual (tally: live/preview/standby + mensaje) ---
   socket.on("enviar_orden_director", (datos) => {
@@ -157,11 +182,17 @@ io.on("connection", (socket) => {
   socket.on("enviar_mensaje_general", (datos) => {
     if (!datos || !Array.isArray(datos.camaras)) return;
 
-    io.emit("recibir_mensaje_general", {
+    const mensaje = {
       camaras: datos.camaras,
       mensaje: datos.mensaje || "",
+      de: datos.de || "DIRECTOR",
+      // Convertir número de cámaras a formato "C1", "C2", etc. para compatibilidad
+      destinatarios: datos.camaras.map((cam) => `C${cam}`),
+      id: Date.now(),
       hora: Date.now(),
-    });
+    };
+
+    io.emit("recibir_mensaje_general", mensaje);
   });
 
   // --- Cámara -> Director / Líder / Pastor (mensaje de texto + estado rápido) ---

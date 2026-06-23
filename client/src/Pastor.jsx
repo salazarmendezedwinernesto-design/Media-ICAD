@@ -124,7 +124,7 @@ export default function Pastor({ alSalir }) {
     );
   };
 
-  // Función unificada de envío centralizado (CORREGIDA PARA EL SERVIDOR)
+  // Función unificada de envío centralizado
   const enviarMensajeSocket = (textoAEnviar) => {
     if (!textoAEnviar || !textoAEnviar.trim() || !socketRef.current) return;
 
@@ -135,13 +135,30 @@ export default function Pastor({ alSalir }) {
       return;
     }
 
-    // Se cambia al evento y la estructura exacta que el servidor unificado espera procesar
-    socketRef.current.emit("enviar_mensaje_a_pastor", {
-      de: "Pastor",
-      texto: textoAEnviar.trim(),
-      destinatarios: destinatarios,
-      id: Date.now(),
-    });
+    // Separar envíos a cámaras de los otros roles
+    const camarasAEnviar = destinatarios
+      .filter((d) => d.startsWith("C"))
+      .map((d) => Number(d.replace("C", "")));
+
+    // Enviar a cámaras usando el evento especializado
+    if (camarasAEnviar.length > 0) {
+      socketRef.current.emit("enviar_mensaje_general", {
+        camaras: camarasAEnviar,
+        mensaje: textoAEnviar.trim(),
+        de: "Pastor",
+      });
+    }
+
+    // Enviar a otros roles (Director, Líder, etc.) usando el bus general
+    const otrosDestinos = destinatarios.filter((d) => !d.startsWith("C"));
+    if (otrosDestinos.length > 0) {
+      socketRef.current.emit("enviar_mensaje_a_pastor", {
+        de: "Pastor",
+        texto: textoAEnviar.trim(),
+        destinatarios: otrosDestinos,
+        id: Date.now(),
+      });
+    }
 
     setConfirmacion("Enviado ✓");
     setTimeout(() => setConfirmacion(""), 2000);

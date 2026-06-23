@@ -57,6 +57,34 @@ export default function Camara({ numero, alSalir }) {
       }
     });
 
+    // Escuchar mensajes generales de Pastor y Líder dirigidos a esta cámara
+    socket.on("recibir_mensaje_general", (datos) => {
+      // Validar que el mensaje venga para esta cámara específica
+      const destinatarios = Array.isArray(datos.destinatarios)
+        ? datos.destinatarios
+        : [];
+      const esParaMi =
+        destinatarios.includes(`C${numero}`) || destinatarios.includes(numero);
+
+      // Si es para mí, mostrar en el banner
+      if (esParaMi && datos.mensaje) {
+        setTally((prev) => ({
+          ...prev,
+          mensaje: datos.mensaje,
+          de: datos.de || "DESCONOCIDO",
+        }));
+
+        // Configurar auto-respuesta inteligente
+        if (datos.de === "Pastor") setResponderA("Pastor");
+        else if (datos.de === "Lider") setResponderA("Lider");
+        else setResponderA("Director");
+
+        if (navigator.vibrate) {
+          navigator.vibrate(400);
+        }
+      }
+    });
+
     return () => {
       socket.disconnect();
     };

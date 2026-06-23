@@ -40,20 +40,25 @@ export default function Camara({ numero, alSalir }) {
 
     socket.on("recibir_orden_camara", (datos) => {
       if (Number(datos.camara) === Number(numero)) {
-        setTally({
-          estado: datos.estado,
-          mensaje: datos.mensaje,
-          de: datos.de || "DIRECTOR",
+        setTally((prev) => {
+          // Vibrar si cambió el estado (live/preview/standby) o si llegó
+          // un mensaje nuevo. Una sola vibración por evento, sin duplicar.
+          const cambioEstado = datos.estado !== prev.estado;
+          const llegoMensaje = Boolean(datos.mensaje);
+          if ((cambioEstado || llegoMensaje) && navigator.vibrate) {
+            navigator.vibrate(400);
+          }
+          return {
+            estado: datos.estado,
+            mensaje: datos.mensaje,
+            de: datos.de || "DIRECTOR",
+          };
         });
 
         // Configurar auto-respuesta inteligente basándose en la procedencia del mensaje
         if (datos.de === "PASTOR") setResponderA("Pastor");
         else if (datos.de === "LÍDER") setResponderA("Lider");
         else setResponderA("Director");
-
-        if (datos.mensaje && navigator.vibrate) {
-          navigator.vibrate(400);
-        }
       }
     });
 

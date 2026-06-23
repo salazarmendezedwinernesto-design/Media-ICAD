@@ -1,13 +1,17 @@
 import React, { useState } from "react";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken, guardarToken } from "./services/auth";
-// Pega aquí la URL de tu logo (puede ser un archivo en /public, ej: "/logo.png",
-// o una URL externa). Si lo dejas en null, se muestra un logo de texto por defecto.
-const LOGO_URL = "client/src/logo MM.jpeg";
+// Importamos el logo como módulo de Vite: así Vite lo empaqueta en el build
+// y genera automáticamente la URL pública correcta (con hash de caché).
+// Antes era una ruta de texto ("client/src/logo MM.jpeg") que el navegador
+// no podía resolver porque Vite no sirve la carpeta src/ como archivos
+// estáticos; por eso el logo nunca se veía en producción.
+import LOGO_URL from "./logo MM.jpeg";
 
 export default function Login({ alIniciarSesion }) {
   const [usuario, setUsuario] = useState("");
   const [contrasena, setContrasena] = useState("");
+  const [mostrarContrasena, setMostrarContrasena] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
 
@@ -81,15 +85,35 @@ export default function Login({ alIniciarSesion }) {
 
           <div style={styles.campo}>
             <label style={styles.etiqueta}>Contraseña</label>
-            <input
-              type="password"
-              value={contrasena}
-              onChange={(e) => setContrasena(e.target.value)}
-              placeholder="Contraseña"
-              autoComplete="current-password"
-              style={styles.input}
-              disabled={cargando}
-            />
+            <div style={styles.contenedorInputContrasena}>
+              <input
+                type={mostrarContrasena ? "text" : "password"}
+                value={contrasena}
+                onChange={(e) => setContrasena(e.target.value)}
+                placeholder="Contraseña"
+                autoComplete="current-password"
+                style={styles.inputContrasena}
+                disabled={cargando}
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarContrasena((prev) => !prev)}
+                style={styles.btnVerContrasena}
+                disabled={cargando}
+                aria-label={
+                  mostrarContrasena
+                    ? "Ocultar contraseña"
+                    : "Mostrar contraseña"
+                }
+                title={
+                  mostrarContrasena
+                    ? "Ocultar contraseña"
+                    : "Mostrar contraseña"
+                }
+              >
+                {mostrarContrasena ? "🙈" : "👁️"}
+              </button>
+            </div>
           </div>
 
           {error && <p style={styles.mensajeError}>{error}</p>}
@@ -141,9 +165,11 @@ const styles = {
     justifyContent: "center",
   },
   logoImg: {
-    maxWidth: "160px",
-    maxHeight: "120px",
-    objectFit: "contain",
+    width: "120px",
+    height: "120px",
+    borderRadius: "50%",
+    objectFit: "cover",
+    border: "2px solid #333",
   },
   logoTexto: {
     display: "flex",
@@ -203,6 +229,38 @@ const styles = {
     fontSize: "1rem",
     outline: "none",
     boxSizing: "border-box",
+  },
+  contenedorInputContrasena: {
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+  },
+  inputContrasena: {
+    backgroundColor: "#141414",
+    border: "1px solid #333",
+    borderRadius: "8px",
+    color: "#fff",
+    padding: "12px",
+    paddingRight: "44px", // deja espacio para el botón del ojo
+    fontSize: "1rem",
+    outline: "none",
+    boxSizing: "border-box",
+    width: "100%",
+  },
+  btnVerContrasena: {
+    position: "absolute",
+    right: "6px",
+    top: "50%",
+    transform: "translateY(-50%)",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    fontSize: "1.1rem",
+    padding: "6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 1,
   },
   mensajeError: {
     color: "#ff5c5c",

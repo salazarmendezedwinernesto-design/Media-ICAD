@@ -107,6 +107,26 @@ io.use((socket, next) => {
 // actual en vez de quedarse "en blanco" hasta la próxima orden.
 const estadoCamaras = {};
 
+// Bus general de mensajería: lo usan Director, Cámara, Líder y Pantalla
+// para mandarse texto libre entre sí. Cada rol filtra en el cliente según
+// el array `destinatarios` (o ignora el mensaje si "de" es él mismo).
+// Se reenvía bajo los 3 nombres de evento que los distintos paneles
+// están escuchando, así no hay que tocar el código de React.
+function difundirMensajeBus(datos) {
+  const mensaje = {
+    de: datos.de || "Desconocido",
+    texto: datos.texto,
+    id: datos.id || Date.now(),
+    destinatarios: Array.isArray(datos.destinatarios)
+      ? datos.destinatarios
+      : ["Todos"],
+  };
+
+  io.emit("recibir_mensaje_pastor", mensaje);
+  io.emit("recibir_mensaje_pastor_en_director", mensaje);
+  io.emit("recibir_mensaje_general", mensaje);
+}
+
 io.on("connection", (socket) => {
   console.log(`Cliente conectado: ${socket.id} (usuario: ${socket.usuario})`);
 
@@ -157,25 +177,20 @@ io.on("connection", (socket) => {
   });
 
   // --- Cualquier rol -> Pastor / Líder / Pantalla / Director / Todos ---
-  // Este es el "bus general" que usan Director, Cámara, Líder y Pastor para
+  // Este es el "bus general" que usan Director, Cámara y Líder para
   // mandarse mensajes entre sí, filtrando por el array `destinatarios`.
   socket.on("enviar_mensaje_a_pastor", (datos) => {
     if (!datos || !datos.texto) return;
+    difundirMensajeBus(datos);
+  });
 
-    const mensaje = {
-      de: datos.de || "Desconocido",
-      texto: datos.texto,
-      id: datos.id || Date.now(),
-      destinatarios: Array.isArray(datos.destinatarios)
-        ? datos.destinatarios
-        : ["Todos"],
-    };
-
-    // Lo mandamos con los 3 nombres de evento que los distintos roles
-    // están escuchando, así no hay que tocar el código del cliente.
-    io.emit("recibir_mensaje_pastor", mensaje);
-    io.emit("recibir_mensaje_pastor_en_director", mensaje);
-    io.emit("recibir_mensaje_general", mensaje);
+  // --- Pantalla -> Director / Pastor (reportes y alertas del operador) ---
+  // Pantalla.jsx usa un nombre de evento propio en vez de
+  // "enviar_mensaje_a_pastor", pero el resultado esperado es el mismo:
+  // que Director/Pastor lo vean en su bandeja de mensajes entrantes.
+  socket.on("enviar_mensaje_pantalla_desde_panel", (datos) => {
+    if (!datos || !datos.texto) return;
+    difundirMensajeBus(datos);
   });
 
   socket.on("disconnect", (motivo) => {

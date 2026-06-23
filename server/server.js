@@ -22,7 +22,7 @@ app.use(express.json());
 // 2. Configuración de Socket.io
 const io = new Server(httpServer, {
   cors: {
-    origin: "https://nexus-appweb.vercel.app", // Coherencia con el frontend
+    origin: "https://crew-nexus.web.app/", // Coherencia con el frontend
     methods: ["GET", "POST"],
   },
 });

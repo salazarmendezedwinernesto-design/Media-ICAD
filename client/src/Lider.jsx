@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
-import { obtenerToken, borrarToken } from "./auth";
+import { obtenerToken, borrarToken } from "./services/auth";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -296,9 +296,7 @@ export default function Lider({ alSalir }) {
               style={{
                 ...styles.btnEnviar,
                 opacity:
-                  destinatarios.length === 0 || !textoMensaje.trim()
-                    ? 0.4
-                    : 1,
+                  destinatarios.length === 0 || !textoMensaje.trim() ? 0.4 : 1,
                 cursor:
                   destinatarios.length === 0 || !textoMensaje.trim()
                     ? "not-allowed"

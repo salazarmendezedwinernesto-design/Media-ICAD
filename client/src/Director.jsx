@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
-import { obtenerToken, borrarToken } from "./auth";
+import { obtenerToken, borrarToken } from "./services/auth";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -163,9 +163,7 @@ export default function Director({ alSalir }) {
         ]);
 
         setTimeout(() => {
-          setMensajesDelLider((prev) =>
-            prev.filter((m) => m.id !== idMensaje),
-          );
+          setMensajesDelLider((prev) => prev.filter((m) => m.id !== idMensaje));
         }, 300000);
       }
       // 3. Mensajes que vienen del Pastor (descartando los ecos del Director)
@@ -187,7 +185,6 @@ export default function Director({ alSalir }) {
         navigator.vibrate([300, 100, 300]);
       }
     });
-
 
     return () => {
       socket.disconnect();

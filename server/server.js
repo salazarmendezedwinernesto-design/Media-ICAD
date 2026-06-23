@@ -1,44 +1,50 @@
 const express = require("express");
-const cors = require("cors"); // Importas el paquete
-const app = express();
+const cors = require("cors");
+const crypto = require("crypto");
+const { createServer } = require("http");
+const { Server } = require("socket.io");
+require("dotenv").config();
 
-// Configuración de CORS
+const app = express();
+const httpServer = createServer(app);
+
+// 1. Configuración de CORS única y correcta
 app.use(
   cors({
-    origin: ["https://nexus-appweb.vercel.app/"], // <-- Verifica que esta sea tu URL de Vercel
+    origin: "https://nexus-appweb.vercel.app", // Sin barra al final
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   }),
 );
 
 app.use(express.json());
-require("dotenv").config(); // Carga las variables del .env al principio
-const express = require("express");
-const crypto = require("crypto");
-const { createServer } = require("http");
-const { Server } = require("socket.io");
 
-const app = express();
-app.use(express.json());
-
-const httpServer = createServer(app);
-
-// Configuración de Socket.io
+// 2. Configuración de Socket.io
 const io = new Server(httpServer, {
   cors: {
-    origin: "*", // En producción, cambia esto por la URL de tu frontend
+    origin: "https://nexus-appweb.vercel.app", // Coherencia con el frontend
     methods: ["GET", "POST"],
   },
 });
 
-// ===== VARIABLES DE ENTORNO =====
-const PORT = process.env.PORT || 3000;
+// ===== VARIABLES =====
+const PORT = process.env.PORT || 10000; // Render suele usar 10000
 const APP_USER = process.env.APP_USER || "icad";
 const APP_PASS = process.env.APP_PASS || "icad2024";
 const TOKEN_SECRET =
   process.env.TOKEN_SECRET || crypto.randomBytes(32).toString("hex");
 
-// ===== AUTENTICACIÓN =====
+// ===== RUTAS =====
+app.post("/api/login", (req, res) => {
+  const { usuario, contrasena } = req.body || {};
+  if (usuario === APP_USER && contrasena === APP_PASS) {
+    const token = firmarToken({ usuario, emitido: Date.now() });
+    return res.json({ ok: true, token });
+  }
+  return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
+});
+
+// ===== FUNCIONES AUXILIARES =====
 function firmarToken(payload) {
   const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const firma = crypto
@@ -47,36 +53,6 @@ function firmarToken(payload) {
     .digest("base64url");
   return `${data}.${firma}`;
 }
-
-function verificarToken(token) {
-  if (!token || typeof token !== "string" || !token.includes(".")) return false;
-  const [data, firma] = token.split(".");
-  const firmaEsperada = crypto
-    .createHmac("sha256", TOKEN_SECRET)
-    .update(data)
-    .digest("base64url");
-  if (firma !== firmaEsperada) return false;
-  try {
-    const payload = JSON.parse(Buffer.from(data, "base64url").toString());
-    if (Date.now() - payload.emitido > 12 * 60 * 60 * 1000) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-app.post("/api/login", (req, res) => {
-  const { usuario, contrasena } = req.body || {};
-  if (usuario === APP_USER && contrasena === APP_PASS) {
-    const token = firmarToken({ usuario, emitido: Date.now() });
-    return res.json({ ok: true, token });
-  }
-  return res
-    .status(401)
-    .json({ ok: false, error: "Usuario o contraseña incorrectos" });
-});
-
-// ... (El resto de tu lógica de sockets se mantiene igual)
 
 httpServer.listen(PORT, () => {
   console.log(`Servidor corriendo en el puerto ${PORT}`);

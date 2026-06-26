@@ -50,11 +50,92 @@ export default function SalaAudio({
   const [micPermitido, setMicPermitido] = useState(true);
   const [conectando, setConectando] = useState(false);
   const [error, setError] = useState("");
+  // socketIds (incluido el propio) cuyo audio está sonando AHORA MISMO,
+  // medido por volumen real (no solo por tener el botón presionado).
+  const [hablandoIds, setHablandoIds] = useState(() => new Set());
 
   const socketRef = useRef(null);
   const localStreamRef = useRef(null);
   const peersRef = useRef({}); // { socketId: RTCPeerConnection }
   const audiosRef = useRef({}); // { socketId: <audio> element }
+  const audioCtxRef = useRef(null); // AudioContext compartido para los analizadores
+  const analizadoresRef = useRef({}); // { socketId: AnalyserNode }
+  const animacionVolumenRef = useRef(null); // id de requestAnimationFrame
+
+  // ---------- Detección de "quién está hablando" por volumen real ----------
+  // Usa la Web Audio API: por cada stream (el propio o el de un peer
+  // remoto) se crea un AnalyserNode que mide el volumen ~12 veces por
+  // segundo. Si supera un umbral chico, se considera que esa persona
+  // está sonando en ese instante.
+  const obtenerAudioContext = () => {
+    if (!audioCtxRef.current) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audioCtxRef.current = new AC();
+    }
+    return audioCtxRef.current;
+  };
+
+  const registrarAnalizador = (socketId, mediaStream) => {
+    try {
+      const ctx = obtenerAudioContext();
+      const fuente = ctx.createMediaStreamSource(mediaStream);
+      const analizador = ctx.createAnalyser();
+      analizador.fftSize = 512;
+      analizador.smoothingTimeConstant = 0.7;
+      fuente.connect(analizador);
+      analizadoresRef.current[socketId] = {
+        analizador,
+        datos: new Uint8Array(analizador.frequencyBinCount),
+      };
+    } catch (e) {
+      console.error("No se pudo crear analizador de audio:", e);
+    }
+  };
+
+  const quitarAnalizador = (socketId) => {
+    delete analizadoresRef.current[socketId];
+  };
+
+  // Loop continuo (requestAnimationFrame) que revisa el volumen de cada
+  // analizador registrado y actualiza qué socketIds están sonando ahora.
+  const iniciarLoopDeVolumen = () => {
+    const UMBRAL = 14; // 0-255; ajustar si detecta de más o de menos
+
+    const paso = () => {
+      const nuevosHablando = new Set();
+
+      Object.entries(analizadoresRef.current).forEach(([socketId, entry]) => {
+        const { analizador, datos } = entry;
+        analizador.getByteFrequencyData(datos);
+        let suma = 0;
+        for (let i = 0; i < datos.length; i++) suma += datos[i];
+        const promedio = suma / datos.length;
+        if (promedio > UMBRAL) nuevosHablando.add(socketId);
+      });
+
+      setHablandoIds((anterior) => {
+        // Evita re-render si el contenido es idéntico al anterior.
+        if (
+          anterior.size === nuevosHablando.size &&
+          [...anterior].every((id) => nuevosHablando.has(id))
+        ) {
+          return anterior;
+        }
+        return nuevosHablando;
+      });
+
+      animacionVolumenRef.current = requestAnimationFrame(paso);
+    };
+
+    animacionVolumenRef.current = requestAnimationFrame(paso);
+  };
+
+  const detenerLoopDeVolumen = () => {
+    if (animacionVolumenRef.current) {
+      cancelAnimationFrame(animacionVolumenRef.current);
+      animacionVolumenRef.current = null;
+    }
+  };
 
   const cerrarPeer = (socketId) => {
     const pc = peersRef.current[socketId];
@@ -68,6 +149,7 @@ export default function SalaAudio({
       audioEl.remove();
       delete audiosRef.current[socketId];
     }
+    quitarAnalizador(socketId);
   };
 
   const cerrarTodosLosPeers = () => {
@@ -105,6 +187,7 @@ export default function SalaAudio({
         audiosRef.current[otroSocketId] = audioEl;
       }
       audioEl.srcObject = evento.streams[0];
+      registrarAnalizador(otroSocketId, evento.streams[0]);
     };
 
     peersRef.current[otroSocketId] = pc;
@@ -141,6 +224,12 @@ export default function SalaAudio({
       stream.getAudioTracks().forEach((t) => (t.enabled = false));
       localStreamRef.current = stream;
       setMicPermitido(true);
+
+      // Analizador para mi propio audio: así mi fila también muestra el
+      // borde "hablando" cuando realmente sale sonido de mi micrófono
+      // (no solo por tener el botón presionado).
+      registrarAnalizador("yo", stream);
+      iniciarLoopDeVolumen();
     } catch (e) {
       console.error("No se pudo acceder al micrófono:", e);
       setMicPermitido(false);
@@ -223,6 +312,8 @@ export default function SalaAudio({
       socketRef.current = null;
     }
     cerrarTodosLosPeers();
+    detenerLoopDeVolumen();
+    quitarAnalizador("yo");
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
@@ -232,6 +323,7 @@ export default function SalaAudio({
     setMiembros([]);
     setLiveSocketId(null);
     setHablando(false);
+    setHablandoIds(new Set());
   };
 
   useEffect(() => {
@@ -241,8 +333,13 @@ export default function SalaAudio({
         socketRef.current.disconnect();
       }
       cerrarTodosLosPeers();
+      detenerLoopDeVolumen();
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+        audioCtxRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -290,7 +387,7 @@ export default function SalaAudio({
           <label style={styles.etiquetaCampo}>Tu nombre</label>
           <input
             type="text"
-            placeholder="Ej. Gaby"
+            placeholder=""
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
             style={styles.inputNombre}
@@ -340,6 +437,13 @@ export default function SalaAudio({
     <div style={styles.contenedor}>
       <div style={styles.fondoDecorativo} />
 
+      {liveSocketId === miSocketId && (
+        <div style={styles.avisoEnVivo}>
+          <span style={styles.avisoEnVivoIcono}>🔴</span>
+          <span style={styles.avisoEnVivoTexto}>ESTÁS EN VIVO</span>
+        </div>
+      )}
+
       <div style={styles.headerArea}>
         <div style={styles.headerTextos}>
           <span style={styles.iconoGrande}>🎙️</span>
@@ -370,12 +474,18 @@ export default function SalaAudio({
         {miembros.map((m) => {
           const enVivo = liveSocketId === m.socketId;
           const soyYo = m.socketId === miSocketId;
+          // "yo" se registra con la clave especial "yo" en el analizador
+          // local; los demás se identifican por su socketId real.
+          const estaHablando = soyYo
+            ? hablandoIds.has("yo")
+            : hablandoIds.has(m.socketId);
           return (
             <div
               key={m.socketId}
               style={{
                 ...styles.filaMiembro,
                 ...(enVivo ? styles.filaMiembroEnVivo : {}),
+                ...(estaHablando ? styles.filaMiembroHablando : {}),
                 cursor: esDirector ? "pointer" : "default",
               }}
               onClick={() => esDirector && marcarEnVivo(m.socketId)}
@@ -387,6 +497,7 @@ export default function SalaAudio({
                 <span style={styles.nombreMiembro}>{m.nombre}</span>
                 {soyYo && <span style={styles.tagYo}>tú</span>}
               </span>
+              {estaHablando && <span style={styles.badgeHablando}>🔊</span>}
               {enVivo && <span style={styles.badgeLive}>● EN VIVO</span>}
             </div>
           );
@@ -633,6 +744,21 @@ const styles = {
     border: "1px solid rgba(0, 230, 118, 0.45)",
     boxShadow: "0 0 18px rgba(0, 200, 83, 0.15)",
   },
+  // Borde "estilo WhatsApp": se prende solo mientras hay sonido real
+  // detectado en ese stream (no solo por tener el botón presionado).
+  // Si la persona también está marcada "en vivo", este borde gana
+  // prioridad visual (se aplica después en el spread de estilos).
+  filaMiembroHablando: {
+    border: "2px solid #00e676",
+    boxShadow:
+      "0 0 0 3px rgba(0, 230, 118, 0.22), 0 0 16px rgba(0, 230, 118, 0.35)",
+    transition: "border-color 0.08s ease, box-shadow 0.08s ease",
+  },
+  badgeHablando: {
+    fontSize: "0.85rem",
+    flexShrink: 0,
+    animation: "pulso-hablando-sala-audio 0.9s ease-in-out infinite",
+  },
   puntoEstado: (enVivo) => ({
     width: "10px",
     height: "10px",
@@ -679,6 +805,31 @@ const styles = {
     position: "relative",
     zIndex: 1,
   },
+  avisoEnVivo: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+    padding: "12px",
+    marginBottom: "16px",
+    borderRadius: "14px",
+    backgroundColor: "rgba(229, 57, 53, 0.15)",
+    border: "1px solid rgba(229, 57, 53, 0.5)",
+    boxShadow: "0 0 24px rgba(229, 57, 53, 0.25)",
+    animation: "pulso-en-vivo-sala-audio 1.4s ease-in-out infinite",
+    position: "relative",
+    zIndex: 1,
+  },
+  avisoEnVivoIcono: {
+    fontSize: "1.1rem",
+    animation: "pulso-hablando-sala-audio 0.9s ease-in-out infinite",
+  },
+  avisoEnVivoTexto: {
+    fontSize: "1rem",
+    fontWeight: 900,
+    letterSpacing: "1px",
+    color: "#ff8a80",
+  },
   btnHablar: {
     width: "100%",
     padding: "20px",
@@ -724,6 +875,14 @@ if (
   styleTag.id = "sala-audio-keyframes";
   styleTag.innerHTML = `
     @keyframes spin-sala-audio { to { transform: rotate(360deg); } }
+    @keyframes pulso-hablando-sala-audio {
+      0%, 100% { opacity: 0.5; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
+    }
+    @keyframes pulso-en-vivo-sala-audio {
+      0%, 100% { box-shadow: 0 0 24px rgba(229, 57, 53, 0.25); }
+      50% { box-shadow: 0 0 36px rgba(229, 57, 53, 0.45); }
+    }
   `;
   document.head.appendChild(styleTag);
 }

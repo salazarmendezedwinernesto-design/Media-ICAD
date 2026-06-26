@@ -436,17 +436,21 @@ const styles = {
     backgroundImage:
       "radial-gradient(circle at 50% 0%, rgba(21, 101, 192, 0.12), transparent 60%)",
     color: "#fff",
-    minHeight: "100vh",
+    position: "fixed",
+    top: 0,
+    left: 0,
+    width: "100vw",
+    height: "100vh",
+    zIndex: 9999,
     padding: "20px",
     boxSizing: "border-box",
     fontFamily: "'Segoe UI', system-ui, -apple-system, Arial, sans-serif",
     display: "flex",
     flexDirection: "column",
-    position: "relative",
-    overflow: "hidden",
+    overflowY: "auto",
   },
   fondoDecorativo: {
-    position: "absolute",
+    position: "fixed",
     top: "-120px",
     right: "-80px",
     width: "260px",
@@ -455,6 +459,7 @@ const styles = {
     background:
       "radial-gradient(circle, rgba(0, 200, 83, 0.10), transparent 70%)",
     pointerEvents: "none",
+    zIndex: -1,
   },
   headerArea: {
     display: "flex",

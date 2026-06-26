@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
+import SalaAudio from "./SalaAudio";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -39,6 +40,7 @@ export default function Lider({ alSalir }) {
   });
   const [confirmacion, setConfirmacion] = useState("");
   const [permitirParpadeo, setPermitirParpadeo] = useState(true);
+  const [mostrarAudio, setMostrarAudio] = useState(false);
 
   const socketRef = useRef(null);
   const temporizadorParpadeoRef = useRef(null);
@@ -157,8 +159,19 @@ export default function Lider({ alSalir }) {
           ⬅️ Menú
         </button>
         <h1 style={styles.navTitle}>🔸 PANEL DE LÍDER</h1>
-        <div style={styles.confirmacion}>{confirmacion}</div>
+        <button style={styles.btnVolver} onClick={() => setMostrarAudio(true)}>
+          🎙️ Audio
+        </button>
       </header>
+      <div style={styles.confirmacion}>{confirmacion}</div>
+
+      {mostrarAudio && (
+        <SalaAudio
+          alSalir={() => setMostrarAudio(false)}
+          esDirector={false}
+          rolEtiqueta="Líder"
+        />
+      )}
 
       <div style={styles.layoutPrincipal}>
         {/* RETORNO DE RETÍCULA DE CÁMARAS */}

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
+import SalaAudio from "./SalaAudio";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -33,6 +34,7 @@ export default function Pastor({ alSalir }) {
   const [textoMensaje, setTextoMensaje] = useState("");
   const [mensajesRecibidos, setMensajesRecibidos] = useState([]);
   const [confirmacion, setConfirmacion] = useState("");
+  const [mostrarAudio, setMostrarAudio] = useState(false);
 
   // Estado inicializado explícitamente para evitar pantallas en blanco antes de conectar con el servidor
   const [estadosCamaras, setEstadosCamaras] = useState({
@@ -201,8 +203,19 @@ export default function Pastor({ alSalir }) {
           ⬅️ Menú
         </button>
         <h1 style={styles.navTitle}>⛪ PANEL DEL PASTOR</h1>
+        <button style={styles.btnVolver} onClick={() => setMostrarAudio(true)}>
+          🎙️ Audio
+        </button>
         <div style={styles.confirmacion}>{confirmacion}</div>
       </header>
+
+      {mostrarAudio && (
+        <SalaAudio
+          alSalir={() => setMostrarAudio(false)}
+          esDirector={false}
+          rolEtiqueta="Pastor"
+        />
+      )}
 
       <div style={styles.layoutPrincipal}>
         {/* MONITOR DE ESTADO DE CÁMARAS */}

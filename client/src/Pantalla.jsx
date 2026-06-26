@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
+import SalaAudio from "./SalaAudio";
 
 const SOCKET_URL = SERVER_URL;
 const DESTINATARIOS_PANTALLA = ["Director", "Pastor", "Lider"];
@@ -21,6 +22,7 @@ export default function Pantalla({ alSalir }) {
   const [mensajesRecibidos, setMensajesRecibidos] = useState([]);
   const [confirmacion, setConfirmacion] = useState("");
   const [permitirParpadeo, setPermitirParpadeo] = useState(true);
+  const [mostrarAudio, setMostrarAudio] = useState(false);
 
   const socketRef = useRef(null);
   const temporizadorParpadeoRef = useRef(null);
@@ -148,8 +150,18 @@ export default function Pantalla({ alSalir }) {
           ⬅️ Menú
         </button>
         <h1 style={styles.navTitle}>📺 OPERADOR DE PANTALLA</h1>
-        <div style={{ width: "60px" }}></div>
+        <button style={styles.btnVolver} onClick={() => setMostrarAudio(true)}>
+          🎙️ Audio
+        </button>
       </header>
+
+      {mostrarAudio && (
+        <SalaAudio
+          alSalir={() => setMostrarAudio(false)}
+          esDirector={false}
+          rolEtiqueta="Pantalla"
+        />
+      )}
 
       {/* PANTALLA PRINCIPAL DE AVISOS RECIBIDOS */}
       <section

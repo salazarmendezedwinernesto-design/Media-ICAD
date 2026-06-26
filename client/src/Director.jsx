@@ -386,6 +386,7 @@ export default function Director({ alSalir }) {
           alSalir={() => setMostrarAudio(false)}
           esDirector={true}
           rolEtiqueta="Director"
+          compacta={true}
         />
       )}
 

@@ -160,6 +160,7 @@ export default function Pantalla({ alSalir }) {
           alSalir={() => setMostrarAudio(false)}
           esDirector={false}
           rolEtiqueta="Pantalla"
+          compacta={true}
         />
       )}
 

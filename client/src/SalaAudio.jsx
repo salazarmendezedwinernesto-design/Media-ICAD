@@ -34,11 +34,18 @@ const ICE_SERVERS = [
  *  - esDirector: si es true, puede tocar a otros para marcarlos en vivo
  *    (verde) dentro de la sala. Solo uno a la vez.
  *  - alSalir: callback para cerrar este panel y volver al rol.
+ *  - compacta: si es true, una vez conectado a la sala se muestra como
+ *    una franja integrada en el flujo normal de la pantalla (no tapa el
+ *    resto de la pantalla), para poder seguir viendo y usando el chat de
+ *    texto al mismo tiempo. La pantalla de selección de sala (antes de
+ *    conectarse) sigue mostrándose en pantalla completa, ya que ahí sí
+ *    necesita la atención completa de la persona por un momento.
  */
 export default function SalaAudio({
   rolEtiqueta,
   esDirector = false,
   alSalir,
+  compacta = false,
 }) {
   const [sala, setSala] = useState(null); // "1".."5" o null = pantalla de selección
   const [nombre, setNombre] = useState("");
@@ -50,6 +57,7 @@ export default function SalaAudio({
   const [micPermitido, setMicPermitido] = useState(true);
   const [conectando, setConectando] = useState(false);
   const [error, setError] = useState("");
+  const [minimizada, setMinimizada] = useState(false); // solo aplica en modo compacto
   // socketIds (incluido el propio) cuyo audio está sonando AHORA MISMO,
   // medido por volumen real (no solo por tener el botón presionado).
   const [hablandoIds, setHablandoIds] = useState(() => new Set());
@@ -362,6 +370,123 @@ export default function SalaAudio({
     const nuevoLive = liveSocketId === socketId ? null : socketId;
     socketRef.current.emit("audio:marcar_live", { sala, socketId: nuevoLive });
   };
+
+  // ================= MODO COMPACTO (conectado, conviviendo con el chat) =================
+  // Se usa una vez que ya estás dentro de una sala y la pantalla padre
+  // pasó compacta=true: en vez de tapar toda la pantalla, se muestra como
+  // una franja arriba, dejando visible el resto del panel (tally, chat,
+  // botones rápidos) debajo.
+  if (compacta && conectado) {
+    return (
+      <div style={styles.compactaContenedor}>
+        {liveSocketId === miSocketId && (
+          <div style={styles.compactaAvisoEnVivo}>
+            <span style={styles.avisoEnVivoIcono}>🔴</span>
+            <span style={styles.avisoEnVivoTexto}>ESTÁS EN VIVO</span>
+          </div>
+        )}
+
+        <div style={styles.compactaHeader}>
+          <div style={styles.compactaHeaderInfo}>
+            <span style={styles.compactaPuntoSala} />
+            <span style={styles.compactaTituloSala}>🎙️ Sala {sala}</span>
+            <span style={styles.compactaContador}>
+              {miembros.length}{" "}
+              {miembros.length === 1 ? "conectado" : "conectados"}
+            </span>
+          </div>
+          <div style={styles.compactaAcciones}>
+            <button
+              style={styles.compactaBtnIcono}
+              onClick={() => setMinimizada((v) => !v)}
+              title={minimizada ? "Expandir" : "Minimizar"}
+            >
+              {minimizada ? "▾" : "▴"}
+            </button>
+            <button
+              style={styles.compactaBtnIcono}
+              onClick={salirDeSala}
+              title="Salir de la sala"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {!minimizada && (
+          <>
+            {error && <p style={styles.textoError}>⚠ {error}</p>}
+
+            <div style={styles.compactaListaMiembros}>
+              {miembros.map((m) => {
+                const enVivo = liveSocketId === m.socketId;
+                const soyYo = m.socketId === miSocketId;
+                const estaHablando = soyYo
+                  ? hablandoIds.has("yo")
+                  : hablandoIds.has(m.socketId);
+                return (
+                  <div
+                    key={m.socketId}
+                    style={{
+                      ...styles.compactaChipMiembro,
+                      ...(enVivo ? styles.compactaChipEnVivo : {}),
+                      ...(estaHablando ? styles.compactaChipHablando : {}),
+                      cursor: esDirector ? "pointer" : "default",
+                    }}
+                    onClick={() => esDirector && marcarEnVivo(m.socketId)}
+                  >
+                    <span style={styles.puntoEstado(enVivo)} />
+                    <span style={styles.compactaChipTexto}>
+                      <strong>{m.rol}</strong>
+                      <span style={styles.separador}>·</span>
+                      {m.nombre}
+                      {soyYo && <span style={styles.tagYo}>tú</span>}
+                    </span>
+                    {estaHablando && (
+                      <span style={styles.badgeHablando}>🔊</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {esDirector && miembros.length > 0 && (
+              <p style={styles.compactaHintDirector}>
+                Tocá un nombre para marcarlo en vivo
+              </p>
+            )}
+
+            {!micPermitido ? (
+              <p style={styles.textoError}>⚠ Sin acceso al micrófono.</p>
+            ) : (
+              <button
+                style={{
+                  ...styles.compactaBtnHablar,
+                  ...(hablando ? styles.btnHablarActivo : {}),
+                }}
+                onMouseDown={empezarAHablar}
+                onMouseUp={dejarDeHablar}
+                onMouseLeave={dejarDeHablar}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  empezarAHablar();
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  dejarDeHablar();
+                }}
+              >
+                <span style={styles.btnHablarIcono}>
+                  {hablando ? "🔴" : "🎤"}
+                </span>
+                {hablando ? "HABLANDO..." : "MANTENÉ PRESIONADO PARA HABLAR"}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
 
   if (!conectado) {
     return (
@@ -862,6 +987,136 @@ const styles = {
   },
   btnHablarIcono: {
     fontSize: "1.2rem",
+  },
+
+  // ===== Estilos del modo compacto (franja integrada, no tapa el chat) =====
+  compactaContenedor: {
+    backgroundColor: "#13131a",
+    backgroundImage:
+      "linear-gradient(180deg, rgba(33,150,243,0.07), transparent)",
+    border: "1px solid rgba(255,255,255,0.09)",
+    borderRadius: "16px",
+    padding: "12px 14px",
+    marginBottom: "10px",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.3)",
+    fontFamily: "'Segoe UI', system-ui, -apple-system, Arial, sans-serif",
+    color: "#fff",
+    boxSizing: "border-box",
+  },
+  compactaHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  compactaHeaderInfo: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap",
+    minWidth: 0,
+  },
+  compactaPuntoSala: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    backgroundColor: "#00e676",
+    boxShadow: "0 0 8px rgba(0, 230, 118, 0.7)",
+    flexShrink: 0,
+  },
+  compactaTituloSala: {
+    fontSize: "0.92rem",
+    fontWeight: 800,
+  },
+  compactaContador: {
+    fontSize: "0.72rem",
+    color: "#8a8f9a",
+    fontWeight: 600,
+  },
+  compactaAcciones: {
+    display: "flex",
+    gap: "6px",
+    flexShrink: 0,
+  },
+  compactaBtnIcono: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#fff",
+    width: "28px",
+    height: "28px",
+    borderRadius: "8px",
+    cursor: "pointer",
+    fontSize: "0.85rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  compactaAvisoEnVivo: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "8px",
+    marginBottom: "10px",
+    borderRadius: "10px",
+    backgroundColor: "rgba(229, 57, 53, 0.15)",
+    border: "1px solid rgba(229, 57, 53, 0.5)",
+    animation: "pulso-en-vivo-sala-audio 1.4s ease-in-out infinite",
+  },
+  compactaListaMiembros: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    marginTop: "10px",
+    marginBottom: "10px",
+  },
+  compactaChipMiembro: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "6px 10px",
+    borderRadius: "999px",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    fontSize: "0.78rem",
+    transition: "border-color 0.1s ease, box-shadow 0.1s ease",
+  },
+  compactaChipEnVivo: {
+    backgroundColor: "rgba(0, 200, 83, 0.14)",
+    border: "1px solid rgba(0, 230, 118, 0.5)",
+  },
+  compactaChipHablando: {
+    border: "2px solid #00e676",
+    boxShadow:
+      "0 0 0 2px rgba(0, 230, 118, 0.2), 0 0 10px rgba(0, 230, 118, 0.3)",
+  },
+  compactaChipTexto: {
+    color: "#e8eaed",
+    whiteSpace: "nowrap",
+  },
+  compactaHintDirector: {
+    color: "#6b7280",
+    fontSize: "0.72rem",
+    textAlign: "center",
+    marginBottom: "8px",
+  },
+  compactaBtnHablar: {
+    width: "100%",
+    padding: "13px",
+    border: "1px solid rgba(33, 150, 243, 0.4)",
+    borderRadius: "12px",
+    backgroundColor: "#0d63d6",
+    backgroundImage: "linear-gradient(135deg, #1976f3, #0d4fb0)",
+    color: "#fff",
+    fontSize: "0.85rem",
+    fontWeight: "800",
+    cursor: "pointer",
+    userSelect: "none",
+    touchAction: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    boxShadow: "0 4px 14px rgba(13, 99, 214, 0.3)",
   },
 };
 

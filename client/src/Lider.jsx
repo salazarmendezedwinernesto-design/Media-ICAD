@@ -170,6 +170,7 @@ export default function Lider({ alSalir }) {
           alSalir={() => setMostrarAudio(false)}
           esDirector={false}
           rolEtiqueta="Líder"
+          compacta={true}
         />
       )}
 

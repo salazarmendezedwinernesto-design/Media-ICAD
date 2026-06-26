@@ -146,6 +146,7 @@ export default function Camara({ numero, alSalir }) {
           alSalir={() => setMostrarAudio(false)}
           esDirector={false}
           rolEtiqueta={`Cámara ${numero}`}
+          compacta={true}
         />
       )}
 

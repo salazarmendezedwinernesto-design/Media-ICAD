@@ -214,6 +214,7 @@ export default function Pastor({ alSalir }) {
           alSalir={() => setMostrarAudio(false)}
           esDirector={false}
           rolEtiqueta="Pastor"
+          compacta={true}
         />
       )}
 

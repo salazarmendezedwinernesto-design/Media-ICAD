@@ -150,6 +150,58 @@ function difundirMensajeBus(datos) {
   }
 }
 
+// ===== SALAS DE AUDIO (Walkie-Talkie por WebRTC) =====
+// Este servidor NUNCA transporta audio: solo coordina ("signaling") para
+// que los navegadores establezcan conexiones WebRTC directas (P2P) entre
+// sí, lo cual mantiene la latencia al mínimo posible. Disponible desde
+// TODOS los paneles (Director, Cámara, Pastor, Líder, Pantalla).
+//
+// salasAudio[sala] = { [socketId]: { nombre, rol } }
+// liveAudio[sala]  = socketId marcado "en vivo" por el Director, o null
+const SALAS_DISPONIBLES = ["1", "2", "3", "4", "5"];
+const salasAudio = {};
+const liveAudio = {};
+SALAS_DISPONIBLES.forEach((s) => {
+  salasAudio[s] = {};
+  liveAudio[s] = null;
+});
+
+function listaSala(sala) {
+  return Object.entries(salasAudio[sala] || {}).map(([socketId, info]) => ({
+    socketId,
+    nombre: info.nombre,
+    rol: info.rol,
+  }));
+}
+
+// Saca a un socket de cualquier sala de audio en la que estuviera
+// (se usa al cambiar de sala, al salir explícitamente, o al desconectar).
+function salirDeSalaAudio(socket) {
+  const sala = socket.data?.salaAudio;
+  if (!sala || !salasAudio[sala]) return;
+
+  delete salasAudio[sala][socket.id];
+  socket.leave(`audio:${sala}`);
+
+  // Si quien se va era el marcado "en vivo", se limpia ese estado.
+  if (liveAudio[sala] === socket.id) {
+    liveAudio[sala] = null;
+    io.to(`audio:${sala}`).emit("audio:live_actualizado", {
+      sala,
+      liveSocketId: null,
+    });
+  }
+
+  // Avisar a los que quedan que este participante se fue, para que
+  // cierren su conexión WebRTC con él.
+  io.to(`audio:${sala}`).emit("audio:participante_salio", {
+    socketId: socket.id,
+  });
+
+  socket.data.salaAudio = null;
+  socket.data.nombreAudio = null;
+}
+
 io.on("connection", (socket) => {
   console.log(`Cliente conectado: ${socket.id} (usuario: ${socket.usuario})`);
 
@@ -224,8 +276,90 @@ io.on("connection", (socket) => {
     difundirMensajeBus(datos);
   });
 
+  // ===== EVENTOS DE SALA DE AUDIO =====
+
+  // Unirse a una sala (1-5). Si ya estaba en otra, primero sale de esa.
+  // datos: { sala: "1".."5", nombre: "Gaby", rol: "Camara 1" | "Pastor" | ... }
+  socket.on("audio:unirse", (datos) => {
+    if (!datos || !datos.sala || !datos.nombre) return;
+    const sala = String(datos.sala);
+    if (!SALAS_DISPONIBLES.includes(sala)) return;
+
+    const nombre = String(datos.nombre).trim().slice(0, 24) || "Sin nombre";
+    const rol = String(datos.rol || "Invitado")
+      .trim()
+      .slice(0, 30);
+
+    // Si ya estaba en otra sala de audio (o la misma), primero se retira.
+    salirDeSalaAudio(socket);
+
+    socket.data.salaAudio = sala;
+    socket.data.nombreAudio = nombre;
+    socket.join(`audio:${sala}`);
+    salasAudio[sala][socket.id] = { nombre, rol };
+
+    // Avisamos a los que YA estaban en la sala que llegó alguien nuevo,
+    // para que cada uno inicie una conexión WebRTC con el recién llegado.
+    socket.to(`audio:${sala}`).emit("audio:nuevo_participante", {
+      socketId: socket.id,
+      nombre,
+      rol,
+    });
+
+    // Al recién llegado le mandamos la lista completa de quienes ya
+    // estaban, para que sepa con quién debe negociar conexión WebRTC.
+    socket.emit("audio:estado_sala", {
+      sala,
+      socketId: socket.id,
+      participantes: listaSala(sala).filter((m) => m.socketId !== socket.id),
+      liveSocketId: liveAudio[sala],
+    });
+
+    // El resto de la sala recibe la lista actualizada (para pintar nombres).
+    io.to(`audio:${sala}`).emit("audio:lista_sala", {
+      sala,
+      miembros: listaSala(sala),
+    });
+  });
+
+  // Salir explícitamente de la sala (botón "Salir" en el panel de audio).
+  socket.on("audio:salir", () => {
+    salirDeSalaAudio(socket);
+  });
+
+  // --- Señalización WebRTC (relay puro; el audio nunca pasa por aquí) ---
+  // datos: { paraSocketId, tipo: "oferta"|"respuesta"|"ice", payload }
+  socket.on("audio:senal", (datos) => {
+    if (!datos || !datos.paraSocketId || !datos.tipo) return;
+    io.to(datos.paraSocketId).emit("audio:senal", {
+      deSocketId: socket.id,
+      tipo: datos.tipo,
+      payload: datos.payload,
+    });
+  });
+
+  // --- Tally de audio (verde/rojo por persona, dentro de una sala) ---
+  // Control del Director: marca a UNA persona como "en vivo" dentro de
+  // su sala; al marcar a otra, la anterior pasa a rojo automáticamente.
+  // socketId null = nadie en vivo (todos en rojo).
+  socket.on("audio:marcar_live", (datos) => {
+    if (!datos || !datos.sala) return;
+    const sala = String(datos.sala);
+    if (!SALAS_DISPONIBLES.includes(sala)) return;
+
+    const socketId = datos.socketId || null;
+    if (socketId && !salasAudio[sala][socketId]) return; // ya no está en la sala
+
+    liveAudio[sala] = socketId;
+    io.to(`audio:${sala}`).emit("audio:live_actualizado", {
+      sala,
+      liveSocketId: socketId,
+    });
+  });
+
   socket.on("disconnect", (motivo) => {
     console.log(`Cliente desconectado: ${socket.id} (${motivo})`);
+    salirDeSalaAudio(socket);
   });
 });
 

@@ -35,7 +35,11 @@ const ICE_SERVERS = [
  *    (verde) dentro de la sala. Solo uno a la vez.
  *  - alSalir: callback para cerrar este panel y volver al rol.
  */
-export default function SalaAudio({ rolEtiqueta, esDirector = false, alSalir }) {
+export default function SalaAudio({
+  rolEtiqueta,
+  esDirector = false,
+  alSalir,
+}) {
   const [sala, setSala] = useState(null); // "1".."5" o null = pantalla de selección
   const [nombre, setNombre] = useState("");
   const [conectado, setConectado] = useState(false);
@@ -265,66 +269,103 @@ export default function SalaAudio({ rolEtiqueta, esDirector = false, alSalir }) 
   if (!conectado) {
     return (
       <div style={styles.contenedor}>
+        <div style={styles.fondoDecorativo} />
+
         <div style={styles.headerArea}>
-          <h2 style={styles.titulo}>🎙️ Sala de audio</h2>
+          <div style={styles.headerTextos}>
+            <span style={styles.iconoGrande}>🎙️</span>
+            <div>
+              <h2 style={styles.titulo}>Sala de audio</h2>
+              <p style={styles.subtitulo}>
+                Comunicación en vivo, baja latencia
+              </p>
+            </div>
+          </div>
           <button style={styles.btnSalirChico} onClick={alSalir}>
-            ✕ Cerrar
+            ✕
           </button>
         </div>
 
-        <p style={styles.subtitulo}>
-          Elegí una sala para hablar por voz con el equipo. Conexión directa,
-          baja latencia.
-        </p>
+        <div style={styles.tarjetaSetup}>
+          <label style={styles.etiquetaCampo}>Tu nombre</label>
+          <input
+            type="text"
+            placeholder="Ej. Gaby"
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            style={styles.inputNombre}
+            maxLength={24}
+            disabled={conectando}
+            autoFocus
+          />
 
-        <input
-          type="text"
-          placeholder="Tu nombre (ej. Gaby)"
-          value={nombre}
-          onChange={(e) => setNombre(e.target.value)}
-          style={styles.inputNombre}
-          maxLength={24}
-          disabled={conectando}
-        />
+          <label style={styles.etiquetaCampo}>Elegí una sala</label>
+          <div style={styles.gridSalas}>
+            {SALAS.map((s) => (
+              <button
+                key={s}
+                style={{
+                  ...styles.btnSala,
+                  opacity: !nombre.trim() || conectando ? 0.4 : 1,
+                  cursor:
+                    !nombre.trim() || conectando ? "not-allowed" : "pointer",
+                }}
+                disabled={!nombre.trim() || conectando}
+                onClick={() => entrarASala(s)}
+              >
+                <span style={styles.btnSalaNumero}>{s}</span>
+                <span style={styles.btnSalaTexto}>SALA</span>
+              </button>
+            ))}
+          </div>
 
-        <div style={styles.gridSalas}>
-          {SALAS.map((s) => (
-            <button
-              key={s}
-              style={{
-                ...styles.btnSala,
-                opacity: !nombre.trim() || conectando ? 0.5 : 1,
-              }}
-              disabled={!nombre.trim() || conectando}
-              onClick={() => entrarASala(s)}
-            >
-              {conectando ? "..." : `SALA ${s}`}
-            </button>
-          ))}
+          {conectando && (
+            <p style={styles.hintConectando}>
+              <span style={styles.spinner} /> Conectando al micrófono y a la
+              sala...
+            </p>
+          )}
+          {!conectando && !nombre.trim() && (
+            <p style={styles.hintNombre}>
+              Escribí tu nombre para poder entrar.
+            </p>
+          )}
+          {error && <p style={styles.textoError}>⚠ {error}</p>}
         </div>
-
-        {!nombre.trim() && (
-          <p style={styles.hintNombre}>Escribí tu nombre para poder entrar.</p>
-        )}
-        {error && <p style={styles.textoError}>{error}</p>}
       </div>
     );
   }
 
   return (
     <div style={styles.contenedor}>
+      <div style={styles.fondoDecorativo} />
+
       <div style={styles.headerArea}>
-        <h2 style={styles.titulo}>🎙️ Sala {sala}</h2>
+        <div style={styles.headerTextos}>
+          <span style={styles.iconoGrande}>🎙️</span>
+          <div>
+            <h2 style={styles.titulo}>Sala {sala}</h2>
+            <p style={styles.subtitulo}>
+              {miembros.length}{" "}
+              {miembros.length === 1
+                ? "persona conectada"
+                : "personas conectadas"}
+            </p>
+          </div>
+        </div>
         <button style={styles.btnSalirChico} onClick={salirDeSala}>
-          ✕ Salir de la sala
+          ✕
         </button>
       </div>
 
-      {error && <p style={styles.textoError}>{error}</p>}
+      {error && <p style={styles.textoError}>⚠ {error}</p>}
 
       <div style={styles.listaMiembros}>
         {miembros.length === 0 && (
-          <p style={styles.vacioLista}>Esperando a que otros se unan...</p>
+          <div style={styles.vacioListaCaja}>
+            <span style={styles.vacioListaIcono}>👋</span>
+            <p style={styles.vacioLista}>Esperando a que otros se unan...</p>
+          </div>
         )}
         {miembros.map((m) => {
           const enVivo = liveSocketId === m.socketId;
@@ -334,41 +375,40 @@ export default function SalaAudio({ rolEtiqueta, esDirector = false, alSalir }) 
               key={m.socketId}
               style={{
                 ...styles.filaMiembro,
-                backgroundColor: enVivo ? "#1b5e20" : "#1a1a1a",
-                border: enVivo ? "1px solid #2e7d32" : "1px solid #333",
+                ...(enVivo ? styles.filaMiembroEnVivo : {}),
                 cursor: esDirector ? "pointer" : "default",
               }}
               onClick={() => esDirector && marcarEnVivo(m.socketId)}
             >
               <span style={styles.puntoEstado(enVivo)} />
               <span style={styles.etiquetaMiembro}>
-                <strong>{m.rol}</strong>
-                <span style={styles.separador}> · </span>
-                {m.nombre}
-                {soyYo && <span style={styles.tagYo}> (tú)</span>}
+                <strong style={styles.rolMiembro}>{m.rol}</strong>
+                <span style={styles.separador}>·</span>
+                <span style={styles.nombreMiembro}>{m.nombre}</span>
+                {soyYo && <span style={styles.tagYo}>tú</span>}
               </span>
-              {enVivo && <span style={styles.badgeLive}>EN VIVO</span>}
+              {enVivo && <span style={styles.badgeLive}>● EN VIVO</span>}
             </div>
           );
         })}
       </div>
 
-      {esDirector && (
+      {esDirector && miembros.length > 0 && (
         <p style={styles.hintDirector}>
-          Tocá un nombre para marcarlo en vivo (verde). Solo uno a la vez.
+          Tocá un nombre para marcarlo en vivo · Solo uno a la vez
         </p>
       )}
 
       {!micPermitido ? (
         <p style={styles.textoError}>
-          Sin acceso al micrófono. Revisá los permisos del navegador y volvé
-          a entrar.
+          ⚠ Sin acceso al micrófono. Revisá los permisos del navegador y volvé a
+          entrar.
         </p>
       ) : (
         <button
           style={{
             ...styles.btnHablar,
-            backgroundColor: hablando ? "#d32f2f" : "#0052cc",
+            ...(hablando ? styles.btnHablarActivo : {}),
           }}
           onMouseDown={empezarAHablar}
           onMouseUp={dejarDeHablar}
@@ -382,7 +422,8 @@ export default function SalaAudio({ rolEtiqueta, esDirector = false, alSalir }) 
             dejarDeHablar();
           }}
         >
-          {hablando ? "🔴 HABLANDO..." : "🎤 MANTENÉ PRESIONADO PARA HABLAR"}
+          <span style={styles.btnHablarIcono}>{hablando ? "🔴" : "🎤"}</span>
+          {hablando ? "HABLANDO..." : "MANTENÉ PRESIONADO PARA HABLAR"}
         </button>
       )}
     </div>
@@ -391,122 +432,293 @@ export default function SalaAudio({ rolEtiqueta, esDirector = false, alSalir }) 
 
 const styles = {
   contenedor: {
-    backgroundColor: "#0f0f0f",
+    backgroundColor: "#0a0a0f",
+    backgroundImage:
+      "radial-gradient(circle at 50% 0%, rgba(21, 101, 192, 0.12), transparent 60%)",
     color: "#fff",
     minHeight: "100vh",
-    padding: "16px",
+    padding: "20px",
     boxSizing: "border-box",
-    fontFamily: "Arial, sans-serif",
+    fontFamily: "'Segoe UI', system-ui, -apple-system, Arial, sans-serif",
     display: "flex",
     flexDirection: "column",
+    position: "relative",
+    overflow: "hidden",
+  },
+  fondoDecorativo: {
+    position: "absolute",
+    top: "-120px",
+    right: "-80px",
+    width: "260px",
+    height: "260px",
+    borderRadius: "50%",
+    background:
+      "radial-gradient(circle, rgba(0, 200, 83, 0.10), transparent 70%)",
+    pointerEvents: "none",
   },
   headerArea: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: "10px",
+    marginBottom: "22px",
+    position: "relative",
+    zIndex: 1,
   },
-  titulo: { margin: 0, fontSize: "1.3rem" },
-  subtitulo: { color: "#999", fontSize: "0.9rem", marginTop: 0 },
+  headerTextos: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+  },
+  iconoGrande: {
+    fontSize: "1.8rem",
+    filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.4))",
+  },
+  titulo: {
+    margin: 0,
+    fontSize: "1.25rem",
+    fontWeight: 800,
+    letterSpacing: "0.2px",
+  },
+  subtitulo: {
+    color: "#8a8f9a",
+    fontSize: "0.82rem",
+    margin: "2px 0 0 0",
+  },
   btnSalirChico: {
-    backgroundColor: "rgba(255,255,255,0.12)",
-    border: "none",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
     color: "#fff",
-    padding: "8px 14px",
-    borderRadius: "6px",
+    width: "36px",
+    height: "36px",
+    borderRadius: "50%",
     cursor: "pointer",
     fontWeight: "bold",
-    fontSize: "0.85rem",
+    fontSize: "0.95rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "background-color 0.15s ease",
+    flexShrink: 0,
+  },
+  tarjetaSetup: {
+    backgroundColor: "rgba(255,255,255,0.035)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: "18px",
+    padding: "22px",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+    position: "relative",
+    zIndex: 1,
+  },
+  etiquetaCampo: {
+    display: "block",
+    color: "#9aa0ab",
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.6px",
+    marginBottom: "8px",
   },
   inputNombre: {
     width: "100%",
-    padding: "12px",
-    borderRadius: "8px",
-    border: "1px solid #444",
-    backgroundColor: "#1a1a1a",
+    padding: "14px 16px",
+    borderRadius: "12px",
+    border: "1px solid rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(0,0,0,0.3)",
     color: "#fff",
     fontSize: "1rem",
     boxSizing: "border-box",
-    marginBottom: "14px",
+    marginBottom: "20px",
     outline: "none",
   },
   gridSalas: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: "10px",
+    gap: "12px",
   },
   btnSala: {
-    padding: "20px 8px",
-    backgroundColor: "#1565c0",
+    padding: "18px 8px",
+    backgroundColor: "rgba(21, 101, 192, 0.18)",
+    backgroundImage:
+      "linear-gradient(135deg, rgba(33, 150, 243, 0.25), rgba(21, 101, 192, 0.12))",
     color: "#fff",
-    border: "none",
-    borderRadius: "10px",
-    fontSize: "1.05rem",
-    fontWeight: "900",
-    cursor: "pointer",
+    border: "1px solid rgba(33, 150, 243, 0.35)",
+    borderRadius: "14px",
+    fontSize: "1rem",
+    fontWeight: "800",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "2px",
+    transition: "transform 0.1s ease",
+  },
+  btnSalaNumero: {
+    fontSize: "1.6rem",
+    lineHeight: 1,
+  },
+  btnSalaTexto: {
+    fontSize: "0.65rem",
+    letterSpacing: "1.5px",
+    color: "#bcd6f5",
+    fontWeight: 700,
+  },
+  hintConectando: {
+    color: "#9ecbff",
+    fontSize: "0.85rem",
+    textAlign: "center",
+    marginTop: "16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+  },
+  spinner: {
+    width: "12px",
+    height: "12px",
+    border: "2px solid rgba(158,203,255,0.3)",
+    borderTopColor: "#9ecbff",
+    borderRadius: "50%",
+    display: "inline-block",
+    animation: "spin-sala-audio 0.7s linear infinite",
   },
   hintNombre: {
-    color: "#777",
+    color: "#6b7280",
     fontSize: "0.8rem",
     textAlign: "center",
-    marginTop: "10px",
+    marginTop: "14px",
   },
   textoError: {
-    color: "#ff5252",
+    color: "#ff6b6b",
     fontSize: "0.85rem",
-    fontWeight: "bold",
+    fontWeight: "600",
+    marginTop: "12px",
   },
   listaMiembros: {
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
-    marginTop: "8px",
-    marginBottom: "14px",
+    gap: "10px",
+    marginBottom: "18px",
     overflowY: "auto",
+    position: "relative",
+    zIndex: 1,
   },
-  vacioLista: { color: "#666", fontSize: "0.9rem", textAlign: "center" },
+  vacioListaCaja: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "40px 20px",
+    color: "#666",
+  },
+  vacioListaIcono: { fontSize: "1.8rem", opacity: 0.6 },
+  vacioLista: { color: "#6b7280", fontSize: "0.9rem", margin: 0 },
   filaMiembro: {
     display: "flex",
     alignItems: "center",
-    gap: "10px",
-    padding: "12px 14px",
-    borderRadius: "8px",
+    gap: "12px",
+    padding: "14px 16px",
+    borderRadius: "14px",
+    backgroundColor: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.07)",
+    transition: "background-color 0.15s ease, border-color 0.15s ease",
+  },
+  filaMiembroEnVivo: {
+    backgroundColor: "rgba(0, 200, 83, 0.12)",
+    border: "1px solid rgba(0, 230, 118, 0.45)",
+    boxShadow: "0 0 18px rgba(0, 200, 83, 0.15)",
   },
   puntoEstado: (enVivo) => ({
     width: "10px",
     height: "10px",
     borderRadius: "50%",
-    backgroundColor: enVivo ? "#00e676" : "#666",
+    backgroundColor: enVivo ? "#00e676" : "#555",
+    boxShadow: enVivo ? "0 0 10px rgba(0, 230, 118, 0.7)" : "none",
     flexShrink: 0,
   }),
-  etiquetaMiembro: { flex: 1, fontSize: "0.95rem" },
-  separador: { color: "#666" },
-  tagYo: { color: "#888", fontStyle: "italic" },
+  etiquetaMiembro: {
+    flex: 1,
+    fontSize: "0.95rem",
+    display: "flex",
+    alignItems: "baseline",
+    gap: "6px",
+    flexWrap: "wrap",
+  },
+  rolMiembro: { color: "#e8eaed", fontWeight: 700 },
+  separador: { color: "#555" },
+  nombreMiembro: { color: "#c7cbd1" },
+  tagYo: {
+    color: "#7aa2ff",
+    fontSize: "0.7rem",
+    fontWeight: 700,
+    backgroundColor: "rgba(122, 162, 255, 0.15)",
+    padding: "2px 7px",
+    borderRadius: "999px",
+    marginLeft: "2px",
+  },
   badgeLive: {
     backgroundColor: "#00c853",
     color: "#04210f",
-    fontSize: "0.7rem",
+    fontSize: "0.68rem",
     fontWeight: "900",
-    padding: "3px 8px",
+    padding: "4px 9px",
     borderRadius: "999px",
+    flexShrink: 0,
+    letterSpacing: "0.3px",
   },
   hintDirector: {
-    color: "#777",
-    fontSize: "0.8rem",
+    color: "#6b7280",
+    fontSize: "0.78rem",
     textAlign: "center",
-    marginBottom: "10px",
+    marginBottom: "14px",
+    position: "relative",
+    zIndex: 1,
   },
   btnHablar: {
     width: "100%",
-    padding: "22px",
-    border: "none",
-    borderRadius: "12px",
+    padding: "20px",
+    border: "1px solid rgba(33, 150, 243, 0.4)",
+    borderRadius: "16px",
+    backgroundColor: "#0d63d6",
+    backgroundImage: "linear-gradient(135deg, #1976f3, #0d4fb0)",
     color: "#fff",
-    fontSize: "1.05rem",
-    fontWeight: "900",
+    fontSize: "1rem",
+    fontWeight: "800",
     cursor: "pointer",
     userSelect: "none",
     touchAction: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+    letterSpacing: "0.3px",
+    boxShadow: "0 8px 24px rgba(13, 99, 214, 0.35)",
+    transition: "transform 0.08s ease, box-shadow 0.15s ease",
+    position: "relative",
+    zIndex: 1,
+  },
+  btnHablarActivo: {
+    backgroundColor: "#c62828",
+    backgroundImage: "linear-gradient(135deg, #e53935, #b71c1c)",
+    boxShadow:
+      "0 0 0 6px rgba(229, 57, 53, 0.18), 0 8px 24px rgba(183, 28, 28, 0.45)",
+    transform: "scale(0.98)",
+  },
+  btnHablarIcono: {
+    fontSize: "1.2rem",
   },
 };
+
+// Animación del spinner de "conectando" (única regla global que este
+// componente necesita; se inyecta una sola vez).
+if (
+  typeof document !== "undefined" &&
+  !document.getElementById("sala-audio-keyframes")
+) {
+  const styleTag = document.createElement("style");
+  styleTag.id = "sala-audio-keyframes";
+  styleTag.innerHTML = `
+    @keyframes spin-sala-audio { to { transform: rotate(360deg); } }
+  `;
+  document.head.appendChild(styleTag);
+}

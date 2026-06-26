@@ -64,6 +64,7 @@ export default function SalaAudio({
 
   const socketRef = useRef(null);
   const localStreamRef = useRef(null);
+  const localStreamCrudoRef = useRef(null); // micrófono sin procesar; hay que cerrarlo igual al salir
   const peersRef = useRef({}); // { socketId: RTCPeerConnection }
   const audiosRef = useRef({}); // { socketId: <audio> element }
   const audioCtxRef = useRef(null); // AudioContext compartido para los analizadores
@@ -78,7 +79,11 @@ export default function SalaAudio({
   const obtenerAudioContext = () => {
     if (!audioCtxRef.current) {
       const AC = window.AudioContext || window.webkitAudioContext;
-      audioCtxRef.current = new AC();
+      // latencyHint "interactive" le pide al navegador el buffer interno
+      // más chico posible (prioriza respuesta inmediata sobre estabilidad),
+      // justo lo que necesitamos para que el filtro de ruido no agregue
+      // demora perceptible al audio que sale por WebRTC.
+      audioCtxRef.current = new AC({ latencyHint: "interactive" });
     }
     return audioCtxRef.current;
   };
@@ -164,14 +169,70 @@ export default function SalaAudio({
     Object.keys(peersRef.current).forEach(cerrarPeer);
   };
 
+  // ---------- Limpieza de audio local: reduce ruido ambiental ----------
+  // Encadena, sobre el micrófono crudo, un filtro paso-alto (corta ruido
+  // grave de fondo: aires acondicionados, viento, murmullo ambiente) y un
+  // compresor dinámico (nivela la voz para que se entienda clara aunque
+  // la persona esté lejos del micrófono o el lugar sea ruidoso). El
+  // resultado es el stream que realmente se manda por WebRTC, además del
+  // que ya filtra el propio navegador (echoCancellation/noiseSuppression).
+  const procesarAudioLocal = (streamCrudo) => {
+    try {
+      const ctx = obtenerAudioContext();
+      const fuente = ctx.createMediaStreamSource(streamCrudo);
+
+      const filtroPasoAlto = ctx.createBiquadFilter();
+      filtroPasoAlto.type = "highpass";
+      filtroPasoAlto.frequency.value = 100; // corta ruido grave de ambiente
+
+      const compresor = ctx.createDynamicsCompressor();
+      compresor.threshold.value = -40;
+      compresor.knee.value = 25;
+      compresor.ratio.value = 8;
+      compresor.attack.value = 0.003;
+      compresor.release.value = 0.25;
+
+      const destino = ctx.createMediaStreamDestination();
+
+      fuente.connect(filtroPasoAlto);
+      filtroPasoAlto.connect(compresor);
+      compresor.connect(destino);
+
+      return destino.stream;
+    } catch (e) {
+      console.error("No se pudo procesar el audio local, se usa el crudo:", e);
+      return streamCrudo;
+    }
+  };
+
   const obtenerOCrearPeer = (otroSocketId) => {
     if (peersRef.current[otroSocketId]) return peersRef.current[otroSocketId];
 
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      // Precalentar candidatos ICE antes de necesitarlos: acelera el
+      // tiempo de conexión inicial, sin afectar la latencia del audio
+      // una vez conectados.
+      iceCandidatePoolSize: 4,
+    });
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current);
+        const sender = pc.addTrack(track, localStreamRef.current);
+        // Le pedimos al navegador que priorice este audio en la red
+        // (menos margen para que otro tráfico lo retrase). No todos los
+        // navegadores soportan setParameters con esta opción; si falla,
+        // simplemente se ignora y sigue funcionando igual.
+        try {
+          const params = sender.getParameters();
+          if (params.encodings && params.encodings.length > 0) {
+            params.encodings[0].networkPriority = "high";
+            params.encodings[0].priority = "high";
+            sender.setParameters(params).catch(() => {});
+          }
+        } catch (e) {
+          /* no soportado en este navegador, se ignora */
+        }
       });
     }
 
@@ -191,6 +252,16 @@ export default function SalaAudio({
         audioEl = document.createElement("audio");
         audioEl.autoplay = true;
         audioEl.playsInline = true;
+        // Reduce el buffer interno de reproducción del navegador: por
+        // defecto algunos navegadores bufferean un poco el audio entrante
+        // para evitar cortes, lo cual se siente como latencia agregada.
+        // Estas propiedades no son estándar en todos los navegadores,
+        // pero donde existen ayudan notablemente (Chrome/Edge en especial).
+        try {
+          audioEl.preservesPitch = false;
+        } catch (e) {
+          /* no soportado, se ignora */
+        }
         document.body.appendChild(audioEl);
         audiosRef.current[otroSocketId] = audioEl;
       }
@@ -202,10 +273,24 @@ export default function SalaAudio({
     return pc;
   };
 
+  // Ajusta la SDP para pedirle a Opus el modo de mínima latencia posible:
+  // desactiva DTX (que puede introducir micro-cortes/retraso al detectar
+  // silencios) y fija un tamaño de paquete chico (ptime), que es lo que
+  // más influye en la sensación de "delay" al hablar por walkie-talkie.
+  const forzarBajaLatenciaEnSDP = (sdp) => {
+    return sdp.replace(
+      /(a=rtpmap:(\d+) opus\/48000\/2\r?\n)/gi,
+      (match, linea, pt) => {
+        return `${linea}a=fmtp:${pt} minptime=10;ptime=10;maxptime=20;useinbandfec=1;usedtx=0\r\n`;
+      },
+    );
+  };
+
   const iniciarOfertaHacia = async (otroSocketId) => {
     const pc = obtenerOCrearPeer(otroSocketId);
     try {
       const oferta = await pc.createOffer();
+      oferta.sdp = forzarBajaLatenciaEnSDP(oferta.sdp);
       await pc.setLocalDescription(oferta);
       socketRef.current.emit("audio:senal", {
         paraSocketId: otroSocketId,
@@ -221,13 +306,26 @@ export default function SalaAudio({
     setError("");
     setConectando(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const streamCrudo = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // Constraints no estándar que Chrome respeta para reforzar la
+          // limpieza de ruido en redes/lugares ruidosos. Si el navegador
+          // no las reconoce, simplemente las ignora sin romper nada.
+          channelCount: 1,
+          sampleRate: 48000,
         },
       });
+
+      // Filtro propio (paso-alto + compresor) ENCIMA del que ya hace el
+      // navegador, para reforzar la limpieza de voz en lugares ruidosos.
+      const stream = procesarAudioLocal(streamCrudo);
+      // Conservamos también el stream crudo para poder cerrar sus pistas
+      // (el micrófono real) cuando se sale de la sala.
+      localStreamCrudoRef.current = streamCrudo;
+
       // Arranca muteado: el push-to-talk activa la pista solo al presionar.
       stream.getAudioTracks().forEach((t) => (t.enabled = false));
       localStreamRef.current = stream;
@@ -290,6 +388,7 @@ export default function SalaAudio({
         if (tipo === "oferta") {
           await pc.setRemoteDescription(new RTCSessionDescription(payload));
           const respuesta = await pc.createAnswer();
+          respuesta.sdp = forzarBajaLatenciaEnSDP(respuesta.sdp);
           await pc.setLocalDescription(respuesta);
           socket.emit("audio:senal", {
             paraSocketId: deSocketId,
@@ -326,6 +425,10 @@ export default function SalaAudio({
       localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
     }
+    if (localStreamCrudoRef.current) {
+      localStreamCrudoRef.current.getTracks().forEach((t) => t.stop());
+      localStreamCrudoRef.current = null;
+    }
     setSala(null);
     setConectado(false);
     setMiembros([]);
@@ -344,6 +447,9 @@ export default function SalaAudio({
       detenerLoopDeVolumen();
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      if (localStreamCrudoRef.current) {
+        localStreamCrudoRef.current.getTracks().forEach((t) => t.stop());
       }
       if (audioCtxRef.current) {
         audioCtxRef.current.close();
@@ -364,6 +470,45 @@ export default function SalaAudio({
     localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = false));
     setHablando(false);
   };
+
+  // El Director tiene las manos ocupadas seguido (cámara, switcher, etc.),
+  // así que en vez de mantener presionado, un solo toque prende el mic y
+  // queda prendido hasta el siguiente toque (toggle). El resto de roles
+  // sigue con push-to-talk: mantener presionado mientras se habla.
+  const alternarHablarDirector = () => {
+    if (hablando) {
+      dejarDeHablar();
+    } else {
+      empezarAHablar();
+    }
+  };
+
+  // Handlers del botón de hablar: cambian según el rol, para no repetir
+  // la rama esDirector en cada uno de los dos botones (modo compacto y
+  // modo pantalla completa).
+  const propsBotonHablar = esDirector
+    ? { onClick: alternarHablarDirector }
+    : {
+        onMouseDown: empezarAHablar,
+        onMouseUp: dejarDeHablar,
+        onMouseLeave: dejarDeHablar,
+        onTouchStart: (e) => {
+          e.preventDefault();
+          empezarAHablar();
+        },
+        onTouchEnd: (e) => {
+          e.preventDefault();
+          dejarDeHablar();
+        },
+      };
+
+  const textoBotonHablar = hablando
+    ? esDirector
+      ? "🔴 MIC ABIERTO · TOCÁ PARA SILENCIAR"
+      : "HABLANDO..."
+    : esDirector
+      ? "TOCÁ PARA ACTIVAR EL MIC"
+      : "MANTENÉ PRESIONADO PARA HABLAR";
 
   const marcarEnVivo = (socketId) => {
     if (!socketRef.current || !sala) return;
@@ -464,22 +609,12 @@ export default function SalaAudio({
                   ...styles.compactaBtnHablar,
                   ...(hablando ? styles.btnHablarActivo : {}),
                 }}
-                onMouseDown={empezarAHablar}
-                onMouseUp={dejarDeHablar}
-                onMouseLeave={dejarDeHablar}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  empezarAHablar();
-                }}
-                onTouchEnd={(e) => {
-                  e.preventDefault();
-                  dejarDeHablar();
-                }}
+                {...propsBotonHablar}
               >
                 <span style={styles.btnHablarIcono}>
                   {hablando ? "🔴" : "🎤"}
                 </span>
-                {hablando ? "HABLANDO..." : "MANTENÉ PRESIONADO PARA HABLAR"}
+                {textoBotonHablar}
               </button>
             )}
           </>
@@ -646,20 +781,10 @@ export default function SalaAudio({
             ...styles.btnHablar,
             ...(hablando ? styles.btnHablarActivo : {}),
           }}
-          onMouseDown={empezarAHablar}
-          onMouseUp={dejarDeHablar}
-          onMouseLeave={dejarDeHablar}
-          onTouchStart={(e) => {
-            e.preventDefault();
-            empezarAHablar();
-          }}
-          onTouchEnd={(e) => {
-            e.preventDefault();
-            dejarDeHablar();
-          }}
+          {...propsBotonHablar}
         >
           <span style={styles.btnHablarIcono}>{hablando ? "🔴" : "🎤"}</span>
-          {hablando ? "HABLANDO..." : "MANTENÉ PRESIONADO PARA HABLAR"}
+          {textoBotonHablar}
         </button>
       )}
     </div>

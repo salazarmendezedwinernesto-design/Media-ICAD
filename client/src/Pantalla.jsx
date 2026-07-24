@@ -3,6 +3,7 @@ import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
 import SalaAudio from "./SalaAudio";
+import BarraTransmision from "./BarraTransmision";
 
 const SOCKET_URL = SERVER_URL;
 const DESTINATARIOS_PANTALLA = ["Director", "Pastor", "Lider"];
@@ -163,6 +164,12 @@ export default function Pantalla({ alSalir }) {
           compacta={true}
         />
       )}
+
+      <BarraTransmision
+        posicion="arriba"
+        variante="grande"
+        mostrarBotonPresentar={true}
+      />
 
       {/* PANTALLA PRINCIPAL DE AVISOS RECIBIDOS */}
       <section

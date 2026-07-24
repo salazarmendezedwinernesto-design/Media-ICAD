@@ -4,6 +4,7 @@ import Camara from "./Camara";
 import Pastor from "./Pastor";
 import Pantalla from "./Pantalla";
 import Lider from "./Lider"; // Importamos el nuevo panel de líder
+import Moderador from "./Moderador";
 import Login from "./Login";
 import { obtenerToken, borrarToken } from "./services/auth";
 
@@ -39,6 +40,10 @@ export default function App() {
 
   if (rol === "lider") {
     return <Lider alSalir={resetMenu} />;
+  }
+
+  if (rol === "moderador") {
+    return <Moderador alSalir={resetMenu} />;
   }
 
   const cerrarSesion = () => {
@@ -95,6 +100,17 @@ export default function App() {
           onClick={() => setRol("pantalla")}
         >
           OPERADOR DE PANTALLA
+        </button>
+
+        <button
+          style={{
+            ...styles.btnDirector,
+            backgroundColor: "#dc2626",
+            marginTop: "10px",
+          }}
+          onClick={() => setRol("moderador")}
+        >
+          📡 PANEL DE MODERADOR
         </button>
 
         <div

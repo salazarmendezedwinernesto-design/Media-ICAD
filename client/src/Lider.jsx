@@ -3,6 +3,7 @@ import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
 import SalaAudio from "./SalaAudio";
+import BarraTransmision from "./BarraTransmision";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -173,6 +174,8 @@ export default function Lider({ alSalir }) {
           compacta={true}
         />
       )}
+
+      <BarraTransmision posicion="abajo" variante="compacta" />
 
       <div style={styles.layoutPrincipal}>
         {/* RETORNO DE RETÍCULA DE CÁMARAS */}

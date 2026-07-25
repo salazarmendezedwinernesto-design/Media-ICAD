@@ -31,8 +31,21 @@ const io = new Server(httpServer, {
 const PORT = process.env.PORT || 10000; // Render suele usar 10000
 const APP_USER = process.env.APP_USER || "icad";
 const APP_PASS = process.env.APP_PASS || "icad2024";
+const MOD_PASSWORD = process.env.MOD_PASSWORD || "moderador2024";
 const TOKEN_SECRET =
   process.env.TOKEN_SECRET || crypto.randomBytes(32).toString("hex");
+
+// ===== CLOUDFLARE REALTIMEKIT (video en vivo, WebRTC, casi cero latencia) =====
+// Estos 4 valores se consiguen UNA sola vez en tu cuenta de Cloudflare
+// (ver LEEME.md). Sin ellos configurados en Render, el botón de video en
+// vivo simplemente avisa que aún no está configurado, sin romper nada más.
+const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
+const CF_API_TOKEN = process.env.CF_API_TOKEN;
+const CF_REALTIME_APP_ID = process.env.CF_REALTIME_APP_ID;
+const CF_REALTIME_MEETING_ID = process.env.CF_REALTIME_MEETING_ID;
+const CF_PRESET_MODERADOR = process.env.CF_PRESET_MODERADOR || "group_call_host";
+const CF_PRESET_ESPECTADOR =
+  process.env.CF_PRESET_ESPECTADOR || "group_call_participant";
 
 // ===== RUTAS =====
 app.post("/api/login", (req, res) => {
@@ -49,6 +62,110 @@ app.post("/api/login", (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, hora: Date.now() });
 });
+
+// Ruta PÚBLICA (sin token) para que la pestaña "/presentar" -- pensada para
+// meterse como Browser Source en OBS Studio/vMix -- pueda consultar el
+// estado de la transmisión en vivo sin necesidad de iniciar sesión.
+app.get("/api/transmision", (req, res) => {
+  res.json(transmision);
+});
+
+// Segunda contraseña, exclusiva del panel de Moderador. Es independiente
+// del usuario/contraseña general de la app (que ya usaron para entrar).
+app.post("/api/moderador-login", (req, res) => {
+  const { contrasena } = req.body || {};
+  if (contrasena === MOD_PASSWORD) {
+    return res.json({ ok: true });
+  }
+  return res.status(401).json({ ok: false, error: "Contraseña incorrecta" });
+});
+
+// Middleware para rutas REST que requieren el token de sesión normal
+// (el mismo que ya usan los sockets), mandado como "Authorization: Bearer <token>".
+function requiereSesion(req, res, next) {
+  const encabezado = req.headers.authorization || "";
+  const token = encabezado.startsWith("Bearer ") ? encabezado.slice(7) : null;
+  const payload = verificarToken(token);
+  if (!payload) {
+    return res.status(401).json({ ok: false, error: "No autorizado" });
+  }
+  req.usuario = payload.usuario;
+  next();
+}
+
+// Genera un "authToken" de Cloudflare RealtimeKit para PUBLICAR video/cámara
+// (rol Moderador). Requiere sesión iniciada -- solo alguien que ya pasó la
+// contraseña del Moderador puede pedir uno de estos.
+app.post("/api/transmision/token", requiereSesion, async (req, res) => {
+  const resultado = await pedirTokenRealtimeKit({
+    nombre: req.body?.nombre || req.usuario,
+    presetName: CF_PRESET_MODERADOR,
+    idParticipante: req.usuario || "moderador",
+  });
+  if (!resultado.ok) return res.status(resultado.status).json(resultado);
+  return res.json(resultado);
+});
+
+// Genera un "authToken" de Cloudflare RealtimeKit SOLO PARA VER (rol
+// espectador, no puede publicar cámara/audio). Es una ruta pública a
+// propósito: la usa "/presentar", que corre SIN login (para OBS Studio).
+// El preset de espectador no permite publicar nada, así que exponerla
+// no compromete la transmisión.
+app.post("/api/transmision/token-espectador", async (req, res) => {
+  const resultado = await pedirTokenRealtimeKit({
+    nombre: req.body?.nombre || "Panel",
+    presetName: CF_PRESET_ESPECTADOR,
+    idParticipante: `espectador-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  });
+  if (!resultado.ok) return res.status(resultado.status).json(resultado);
+  return res.json(resultado);
+});
+
+async function pedirTokenRealtimeKit({ nombre, presetName, idParticipante }) {
+  if (!CF_ACCOUNT_ID || !CF_API_TOKEN || !CF_REALTIME_APP_ID || !CF_REALTIME_MEETING_ID) {
+    return {
+      ok: false,
+      status: 500,
+      error:
+        "El video en vivo todavía no está configurado en el servidor (faltan las variables CF_* en Render).",
+    };
+  }
+
+  try {
+    const respuesta = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/realtime/kit/${CF_REALTIME_APP_ID}/meetings/${CF_REALTIME_MEETING_ID}/participants`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${CF_API_TOKEN}`,
+        },
+        body: JSON.stringify({
+          name: String(nombre || "Invitado").slice(0, 60),
+          preset_name: presetName,
+          custom_participant_id: String(idParticipante),
+        }),
+      }
+    );
+
+    const datos = await respuesta.json();
+
+    // La forma exacta de la respuesta puede variar; revisamos varios
+    // lugares posibles del campo del token para no quedar frágiles.
+    const authToken =
+      datos?.result?.token || datos?.result?.data?.token || datos?.token;
+
+    if (!respuesta.ok || !authToken) {
+      console.error("Respuesta inesperada de Cloudflare RealtimeKit:", datos);
+      return { ok: false, status: 502, error: "No se pudo generar el acceso al video en vivo." };
+    }
+
+    return { ok: true, status: 200, authToken };
+  } catch (error) {
+    console.error("Error llamando a Cloudflare RealtimeKit:", error);
+    return { ok: false, status: 502, error: "Error de conexión con Cloudflare." };
+  }
+}
 
 // ===== FUNCIONES AUXILIARES =====
 function firmarToken(payload) {
@@ -106,6 +223,16 @@ io.use((socket, next) => {
 // que se conecta tarde (p.ej. recarga la página) puede recibir el estado
 // actual en vez de quedarse "en blanco" hasta la próxima orden.
 const estadoCamaras = {};
+
+// ===== TRANSMISIÓN EN VIVO (Moderador) =====
+// Estado guardado SOLO en memoria (nunca en disco/DB). Si el moderador pulsa
+// "Finalizar" o el servidor se reinicia, esto se borra por completo: no
+// queda historial ni grabación de ninguna transmisión pasada.
+let transmision = {
+  activa: false,
+  iniciadaPor: null,
+  inicio: null,
+};
 
 // Bus general de mensajería: lo usan Director, Cámara, Líder y Pantalla
 // para mandarse texto libre entre sí. Valida destinatarios y emite solo a quienes les corresponde.
@@ -211,6 +338,11 @@ io.on("connection", (socket) => {
     socket.emit("recibir_orden_camara", estado);
   });
 
+  // También le mandamos el estado actual de la transmisión en vivo, para
+  // que si ya estaba activa, la barra aparezca de inmediato sin esperar
+  // al próximo evento del moderador.
+  socket.emit("transmision:estado", transmision);
+
   // --- Director -> Cámara individual (tally: live/preview/standby + mensaje) ---
   socket.on("enviar_orden_director", (datos) => {
     if (!datos || datos.camara === undefined) return;
@@ -274,6 +406,26 @@ io.on("connection", (socket) => {
   socket.on("enviar_mensaje_pantalla_desde_panel", (datos) => {
     if (!datos || !datos.texto) return;
     difundirMensajeBus(datos);
+  });
+
+  // ===== TRANSMISIÓN EN VIVO (Moderador) =====
+
+  // --- Moderador -> Todos: activó su cámara/pantalla en la sala de video en vivo ---
+  socket.on("transmision:iniciar", (datos) => {
+    transmision = {
+      activa: true,
+      iniciadaPor: datos?.de || socket.usuario || "Moderador",
+      inicio: Date.now(),
+    };
+    io.emit("transmision:estado", transmision);
+  });
+
+  // --- Moderador -> Todos: finalizar transmisión ---
+  // No se "apaga" nada más: se BORRA el estado por completo (nada queda
+  // guardado), tal como se pidió.
+  socket.on("transmision:finalizar", () => {
+    transmision = { activa: false, iniciadaPor: null, inicio: null };
+    io.emit("transmision:estado", transmision);
   });
 
   // ===== EVENTOS DE SALA DE AUDIO =====

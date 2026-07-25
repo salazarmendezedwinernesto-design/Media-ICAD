@@ -43,7 +43,8 @@ const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
 const CF_API_TOKEN = process.env.CF_API_TOKEN;
 const CF_REALTIME_APP_ID = process.env.CF_REALTIME_APP_ID;
 const CF_REALTIME_MEETING_ID = process.env.CF_REALTIME_MEETING_ID;
-const CF_PRESET_MODERADOR = process.env.CF_PRESET_MODERADOR || "group_call_host";
+const CF_PRESET_MODERADOR =
+  process.env.CF_PRESET_MODERADOR || "group_call_host";
 const CF_PRESET_ESPECTADOR =
   process.env.CF_PRESET_ESPECTADOR || "group_call_participant";
 
@@ -122,7 +123,12 @@ app.post("/api/transmision/token-espectador", async (req, res) => {
 });
 
 async function pedirTokenRealtimeKit({ nombre, presetName, idParticipante }) {
-  if (!CF_ACCOUNT_ID || !CF_API_TOKEN || !CF_REALTIME_APP_ID || !CF_REALTIME_MEETING_ID) {
+  if (
+    !CF_ACCOUNT_ID ||
+    !CF_API_TOKEN ||
+    !CF_REALTIME_APP_ID ||
+    !CF_REALTIME_MEETING_ID
+  ) {
     return {
       ok: false,
       status: 500,
@@ -145,7 +151,7 @@ async function pedirTokenRealtimeKit({ nombre, presetName, idParticipante }) {
           preset_name: presetName,
           custom_participant_id: String(idParticipante),
         }),
-      }
+      },
     );
 
     const datos = await respuesta.json();
@@ -153,17 +159,29 @@ async function pedirTokenRealtimeKit({ nombre, presetName, idParticipante }) {
     // La forma exacta de la respuesta puede variar; revisamos varios
     // lugares posibles del campo del token para no quedar frágiles.
     const authToken =
-      datos?.result?.token || datos?.result?.data?.token || datos?.token;
+      datos?.data?.token ||
+      datos?.data?.data?.token ||
+      datos?.result?.token ||
+      datos?.result?.data?.token ||
+      datos?.token;
 
     if (!respuesta.ok || !authToken) {
       console.error("Respuesta inesperada de Cloudflare RealtimeKit:", datos);
-      return { ok: false, status: 502, error: "No se pudo generar el acceso al video en vivo." };
+      return {
+        ok: false,
+        status: 502,
+        error: "No se pudo generar el acceso al video en vivo.",
+      };
     }
 
     return { ok: true, status: 200, authToken };
   } catch (error) {
     console.error("Error llamando a Cloudflare RealtimeKit:", error);
-    return { ok: false, status: 502, error: "Error de conexión con Cloudflare." };
+    return {
+      ok: false,
+      status: 502,
+      error: "Error de conexión con Cloudflare.",
+    };
   }
 }
 

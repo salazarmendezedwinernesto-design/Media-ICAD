@@ -2,32 +2,22 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken } from "./services/auth";
-import VisorTransmision from "./VisorTransmision";
+import SalaVideoEnVivo from "./SalaVideoEnVivo";
 
 /**
  * Barra de transmisión en vivo, reutilizable desde cualquier panel
  * (Director, Cámara, Pastor, Líder, Pantalla).
  *
- * Se conecta por su cuenta a Socket.IO (igual que hace SalaAudio) solo para
- * escuchar el evento "transmision:estado" que manda el servidor. No muestra
- * nada mientras no hay transmisión activa; en cuanto el Moderador la inicia,
- * aparece sola en todos los paneles conectados, y desaparece sola cuando
- * el Moderador la finaliza (o al recargar, si el servidor la reinició).
- *
- * Props:
- *  - posicion: "arriba" | "abajo" (dónde se coloca dentro del panel)
- *  - variante: "compacta" (barra angosta con miniatura, pensada para
- *    Director/Cámara/Pastor/Líder) | "grande" (preview más grande, pensada
- *    para el panel de Pantalla)
- *  - mostrarBotonPresentar: si true, agrega un botón que abre /presentar
- *    en una pestaña nueva (para meterla en OBS Studio como Browser Source)
+ * Solo aparece cuando el Moderador tiene la sala activa; desaparece sola
+ * cuando la finaliza. El video se conecta por WebRTC (Cloudflare
+ * RealtimeKit), casi cero latencia -- no hay ningún link involucrado.
  */
 export default function BarraTransmision({
   posicion = "abajo",
   variante = "compacta",
   mostrarBotonPresentar = false,
 }) {
-  const [transmision, setTransmision] = useState({ activa: false, url: null });
+  const [transmision, setTransmision] = useState({ activa: false });
   const [expandida, setExpandida] = useState(variante === "grande");
   const socketRef = useRef(null);
 
@@ -46,7 +36,7 @@ export default function BarraTransmision({
     };
   }, []);
 
-  if (!transmision.activa || !transmision.url) return null;
+  if (!transmision.activa) return null;
 
   const abrirPresentar = () => {
     window.open("/presentar", "_blank", "noopener,noreferrer");
@@ -91,8 +81,9 @@ export default function BarraTransmision({
       </div>
 
       {expandida && (
-        <VisorTransmision
-          url={transmision.url}
+        <SalaVideoEnVivo
+          modo="espectador"
+          nombre="Panel"
           alto={variante === "grande" ? "260px" : "170px"}
         />
       )}

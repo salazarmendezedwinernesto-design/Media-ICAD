@@ -2,16 +2,48 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
-import VisorTransmision from "./VisorTransmision";
+import SalaVideoEnVivo from "./SalaVideoEnVivo";
 
 export default function Moderador({ alSalir }) {
-  const [url, setUrl] = useState("");
-  const [transmision, setTransmision] = useState({ activa: false, url: null });
-  const [confirmacion, setConfirmacion] = useState("");
+  const [desbloqueado, setDesbloqueado] = useState(
+    () => sessionStorage.getItem("mod_desbloqueado") === "1"
+  );
+  const [contrasena, setContrasena] = useState("");
+  const [errorClave, setErrorClave] = useState("");
+  const [verificando, setVerificando] = useState(false);
+
+  const [transmision, setTransmision] = useState({ activa: false });
+  const [sesionAbierta, setSesionAbierta] = useState(false);
 
   const socketRef = useRef(null);
 
+  const verificarContrasena = async (e) => {
+    e.preventDefault();
+    setVerificando(true);
+    setErrorClave("");
+    try {
+      const respuesta = await fetch(`${SERVER_URL}/api/moderador-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contrasena }),
+      });
+      const datos = await respuesta.json();
+      if (respuesta.ok && datos.ok) {
+        sessionStorage.setItem("mod_desbloqueado", "1");
+        setDesbloqueado(true);
+      } else {
+        setErrorClave(datos.error || "Contraseña incorrecta");
+      }
+    } catch {
+      setErrorClave("No se pudo conectar con el servidor.");
+    } finally {
+      setVerificando(false);
+    }
+  };
+
   useEffect(() => {
+    if (!desbloqueado) return;
+
     const socket = io(SERVER_URL, {
       auth: { token: obtenerToken() },
     });
@@ -29,29 +61,64 @@ export default function Moderador({ alSalir }) {
     });
 
     return () => socket.disconnect();
-  }, []);
+  }, [desbloqueado]);
 
-  const iniciarTransmision = (e) => {
-    e.preventDefault();
-    const limpio = url.trim();
-    if (!limpio || !socketRef.current) return;
-
-    socketRef.current.emit("transmision:iniciar", {
-      url: limpio,
-      de: "Moderador",
-    });
-
-    setConfirmacion("✅ Transmisión iniciada, ya es visible en todos los paneles");
-    setTimeout(() => setConfirmacion(""), 4000);
+  const iniciarTransmision = () => {
+    setSesionAbierta(true);
+    socketRef.current?.emit("transmision:iniciar", { de: "Moderador" });
   };
 
   const finalizarTransmision = () => {
-    if (!socketRef.current) return;
-    socketRef.current.emit("transmision:finalizar");
-    setUrl("");
-    setConfirmacion("🛑 Transmisión finalizada y eliminada");
-    setTimeout(() => setConfirmacion(""), 4000);
+    setSesionAbierta(false);
+    socketRef.current?.emit("transmision:finalizar");
   };
+
+  if (!desbloqueado) {
+    return (
+      <div style={styles.container}>
+        <header style={styles.navbar}>
+          <button style={styles.btnVolver} onClick={alSalir}>
+            ⬅️ Menú
+          </button>
+          <h1 style={styles.navTitle}>📡 PANEL DE MODERADOR</h1>
+          <div style={{ width: "90px" }} />
+        </header>
+
+        <section style={styles.tarjeta}>
+          <span style={styles.tituloSeccion}>🔒 ACCESO RESTRINGIDO</span>
+          <form onSubmit={verificarContrasena} style={styles.formulario}>
+            <label style={styles.etiqueta}>
+              Este panel tiene una contraseña aparte. Ingrésala para
+              continuar:
+            </label>
+            <input
+              type="password"
+              value={contrasena}
+              onChange={(e) => setContrasena(e.target.value)}
+              placeholder="Contraseña del moderador"
+              style={styles.input}
+              autoFocus
+            />
+            {errorClave && (
+              <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>
+                {errorClave}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={!contrasena.trim() || verificando}
+              style={{
+                ...styles.btnIniciar,
+                opacity: !contrasena.trim() || verificando ? 0.4 : 1,
+              }}
+            >
+              {verificando ? "Verificando..." : "Entrar"}
+            </button>
+          </form>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
@@ -68,53 +135,39 @@ export default function Moderador({ alSalir }) {
           {transmision.activa ? "🔴 TRANSMISIÓN ACTIVA" : "⚪ SIN TRANSMISIÓN"}
         </span>
 
-        {!transmision.activa ? (
-          <form onSubmit={iniciarTransmision} style={styles.formulario}>
-            <label style={styles.etiqueta}>
-              Pega el enlace de la transmisión (salida web de vMix, OBS, o el
-              embed de YouTube/Facebook Live):
-            </label>
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://..."
-              style={styles.input}
-            />
-            <button
-              type="submit"
-              disabled={!url.trim()}
-              style={{
-                ...styles.btnIniciar,
-                opacity: !url.trim() ? 0.4 : 1,
-                cursor: !url.trim() ? "not-allowed" : "pointer",
-              }}
-            >
+        {!sesionAbierta ? (
+          <div style={styles.formulario}>
+            <p style={styles.notaAyuda}>
+              Al iniciar, elige tu fuente de video: puedes usar tu cámara, o
+              en OBS Studio / vMix activa <strong>"Cámara Virtual"</strong> y
+              selecciónala aquí como si fuera una webcam más. No hay ninguna
+              clave que copiar.
+            </p>
+            <button style={styles.btnIniciar} onClick={iniciarTransmision}>
               🔴 Iniciar transmisión
             </button>
-          </form>
+          </div>
         ) : (
           <div style={styles.formulario}>
-            <p style={styles.urlActiva}>{transmision.url}</p>
             <button style={styles.btnFinalizar} onClick={finalizarTransmision}>
               🛑 Finalizar transmisión
             </button>
             <p style={styles.notaAyuda}>
-              Al finalizar, el enlace se elimina por completo: no queda
-              guardado en ningún lado.
+              Al finalizar, la sala se cierra por completo para todos: no
+              queda ninguna grabación guardada.
             </p>
           </div>
         )}
-
-        {confirmacion && (
-          <div style={styles.bannerConfirmacion}>{confirmacion}</div>
-        )}
       </section>
 
-      {transmision.activa && (
+      {sesionAbierta && (
         <section style={styles.tarjeta}>
-          <span style={styles.tituloSeccion}>👁️ VISTA PREVIA (lo que ven los demás paneles)</span>
-          <VisorTransmision url={transmision.url} alto="280px" />
+          <span style={styles.tituloSeccion}>
+            🎥 TU SALA (elige cámara/pantalla aquí)
+          </span>
+          <div style={{ height: "420px" }}>
+            <SalaVideoEnVivo modo="moderador" nombre="Moderador" alto="100%" />
+          </div>
         </section>
       )}
     </div>
@@ -199,16 +252,7 @@ const styles = {
     padding: "14px",
     fontSize: "1rem",
     fontWeight: "bold",
-  },
-  urlActiva: {
-    backgroundColor: "#0b0c10",
-    border: "1px solid #2d303f",
-    borderRadius: "8px",
-    padding: "12px",
-    fontSize: "0.85rem",
-    color: "#9ca3af",
-    wordBreak: "break-all",
-    margin: 0,
+    cursor: "pointer",
   },
   btnFinalizar: {
     backgroundColor: "#374151",
@@ -224,14 +268,5 @@ const styles = {
     fontSize: "0.75rem",
     color: "#6b7280",
     margin: 0,
-  },
-  bannerConfirmacion: {
-    backgroundColor: "#065f46",
-    color: "#34d399",
-    padding: "8px",
-    borderRadius: "6px",
-    textAlign: "center",
-    fontSize: "0.85rem",
-    fontWeight: "bold",
   },
 };

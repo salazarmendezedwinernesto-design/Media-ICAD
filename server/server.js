@@ -35,18 +35,10 @@ const MOD_PASSWORD = process.env.MOD_PASSWORD || "moderador2024";
 const TOKEN_SECRET =
   process.env.TOKEN_SECRET || crypto.randomBytes(32).toString("hex");
 
-// ===== CLOUDFLARE REALTIMEKIT (video en vivo, WebRTC, casi cero latencia) =====
-// Estos 4 valores se consiguen UNA sola vez en tu cuenta de Cloudflare
-// (ver LEEME.md). Sin ellos configurados en Render, el botón de video en
-// vivo simplemente avisa que aún no está configurado, sin romper nada más.
-const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
-const CF_API_TOKEN = process.env.CF_API_TOKEN;
-const CF_REALTIME_APP_ID = process.env.CF_REALTIME_APP_ID;
-const CF_REALTIME_MEETING_ID = process.env.CF_REALTIME_MEETING_ID;
-const CF_PRESET_MODERADOR =
-  process.env.CF_PRESET_MODERADOR || "group_call_host";
-const CF_PRESET_ESPECTADOR =
-  process.env.CF_PRESET_ESPECTADOR || "group_call_participant";
+// Clave secreta compartida con MediaMTX (tu VPS), para que nadie más
+// pueda llamar a los webhooks de abajo y falsificar el estado "en vivo".
+// Debe coincidir con el valor que pongas en mediamtx.yml (ver LEEME.md).
+const MEDIAMTX_WEBHOOK_SECRET = process.env.MEDIAMTX_WEBHOOK_SECRET || "";
 
 // ===== RUTAS =====
 app.post("/api/login", (req, res) => {
@@ -81,109 +73,37 @@ app.post("/api/moderador-login", (req, res) => {
   return res.status(401).json({ ok: false, error: "Contraseña incorrecta" });
 });
 
-// Middleware para rutas REST que requieren el token de sesión normal
-// (el mismo que ya usan los sockets), mandado como "Authorization: Bearer <token>".
-function requiereSesion(req, res, next) {
-  const encabezado = req.headers.authorization || "";
-  const token = encabezado.startsWith("Bearer ") ? encabezado.slice(7) : null;
-  const payload = verificarToken(token);
-  if (!payload) {
-    return res.status(401).json({ ok: false, error: "No autorizado" });
+// ===== WEBHOOKS DE MEDIAMTX (detección automática de "en vivo") =====
+// MediaMTX (en tu VPS) llama a estas 2 rutas solo por su cuenta, usando
+// sus opciones "runOnReady" / "runOnNotReady" (ver mediamtx.yml en el
+// LEEME.md) -- no requieren que nadie le dé clic a nada en la app.
+
+function validarSecretoWebhook(req, res) {
+  if (!MEDIAMTX_WEBHOOK_SECRET) return true; // sin secreto configurado = sin validar (solo para pruebas)
+  const recibido = req.query.secreto || req.body?.secreto;
+  if (recibido !== MEDIAMTX_WEBHOOK_SECRET) {
+    res.status(401).json({ ok: false, error: "Secreto de webhook inválido" });
+    return false;
   }
-  req.usuario = payload.usuario;
-  next();
+  return true;
 }
 
-// Genera un "authToken" de Cloudflare RealtimeKit para PUBLICAR video/cámara
-// (rol Moderador). Requiere sesión iniciada -- solo alguien que ya pasó la
-// contraseña del Moderador puede pedir uno de estos.
-app.post("/api/transmision/token", requiereSesion, async (req, res) => {
-  const resultado = await pedirTokenRealtimeKit({
-    nombre: req.body?.nombre || req.usuario,
-    presetName: CF_PRESET_MODERADOR,
-    idParticipante: req.usuario || "moderador",
-  });
-  if (!resultado.ok) return res.status(resultado.status).json(resultado);
-  return res.json(resultado);
+// MediaMTX llama esto en cuanto OBS/vMix empieza a publicar.
+app.post("/api/mediamtx/ready", (req, res) => {
+  if (!validarSecretoWebhook(req, res)) return;
+  transmision = { activa: true, iniciadaPor: "OBS/vMix", inicio: Date.now() };
+  io.emit("transmision:estado", transmision);
+  res.json({ ok: true });
 });
 
-// Genera un "authToken" de Cloudflare RealtimeKit SOLO PARA VER (rol
-// espectador, no puede publicar cámara/audio). Es una ruta pública a
-// propósito: la usa "/presentar", que corre SIN login (para OBS Studio).
-// El preset de espectador no permite publicar nada, así que exponerla
-// no compromete la transmisión.
-app.post("/api/transmision/token-espectador", async (req, res) => {
-  const resultado = await pedirTokenRealtimeKit({
-    nombre: req.body?.nombre || "Panel",
-    presetName: CF_PRESET_ESPECTADOR,
-    idParticipante: `espectador-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  });
-  if (!resultado.ok) return res.status(resultado.status).json(resultado);
-  return res.json(resultado);
+// MediaMTX llama esto en cuanto OBS/vMix corta la transmisión.
+// Se BORRA el estado por completo -- no queda nada guardado.
+app.post("/api/mediamtx/not-ready", (req, res) => {
+  if (!validarSecretoWebhook(req, res)) return;
+  transmision = { activa: false, iniciadaPor: null, inicio: null };
+  io.emit("transmision:estado", transmision);
+  res.json({ ok: true });
 });
-
-async function pedirTokenRealtimeKit({ nombre, presetName, idParticipante }) {
-  if (
-    !CF_ACCOUNT_ID ||
-    !CF_API_TOKEN ||
-    !CF_REALTIME_APP_ID ||
-    !CF_REALTIME_MEETING_ID
-  ) {
-    return {
-      ok: false,
-      status: 500,
-      error:
-        "El video en vivo todavía no está configurado en el servidor (faltan las variables CF_* en Render).",
-    };
-  }
-
-  try {
-    const respuesta = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/realtime/kit/${CF_REALTIME_APP_ID}/meetings/${CF_REALTIME_MEETING_ID}/participants`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${CF_API_TOKEN}`,
-        },
-        body: JSON.stringify({
-          name: String(nombre || "Invitado").slice(0, 60),
-          preset_name: presetName,
-          custom_participant_id: String(idParticipante),
-        }),
-      },
-    );
-
-    const datos = await respuesta.json();
-
-    // La forma exacta de la respuesta puede variar; revisamos varios
-    // lugares posibles del campo del token para no quedar frágiles.
-    const authToken =
-      datos?.data?.token ||
-      datos?.data?.data?.token ||
-      datos?.result?.token ||
-      datos?.result?.data?.token ||
-      datos?.token;
-
-    if (!respuesta.ok || !authToken) {
-      console.error("Respuesta inesperada de Cloudflare RealtimeKit:", datos);
-      return {
-        ok: false,
-        status: 502,
-        error: "No se pudo generar el acceso al video en vivo.",
-      };
-    }
-
-    return { ok: true, status: 200, authToken };
-  } catch (error) {
-    console.error("Error llamando a Cloudflare RealtimeKit:", error);
-    return {
-      ok: false,
-      status: 502,
-      error: "Error de conexión con Cloudflare.",
-    };
-  }
-}
 
 // ===== FUNCIONES AUXILIARES =====
 function firmarToken(payload) {

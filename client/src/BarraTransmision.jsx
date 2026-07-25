@@ -1,16 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { SERVER_URL } from "./config";
+import { SERVER_URL, MEDIAMTX_WHEP_URL } from "./config";
 import { obtenerToken } from "./services/auth";
-import SalaVideoEnVivo from "./SalaVideoEnVivo";
+import LiveStream from "./LiveStream";
 
 /**
- * Barra de transmisión en vivo, reutilizable desde cualquier panel
- * (Director, Cámara, Pastor, Líder, Pantalla).
+ * Barra de transmision en vivo, reutilizable desde cualquier panel
+ * (Director, Camara, Pastor, Lider, Pantalla).
  *
- * Solo aparece cuando el Moderador tiene la sala activa; desaparece sola
- * cuando la finaliza. El video se conecta por WebRTC (Cloudflare
- * RealtimeKit), casi cero latencia -- no hay ningún link involucrado.
+ * Solo aparece cuando MediaMTX detecto que OBS/vMix esta transmitiendo
+ * (el servidor recibe ese aviso automaticamente por webhook, ver
+ * server.js: /api/mediamtx/ready). No hay que darle click a nada para
+ * que aparezca ni desaparezca.
  */
 export default function BarraTransmision({
   posicion = "abajo",
@@ -81,9 +82,8 @@ export default function BarraTransmision({
       </div>
 
       {expandida && (
-        <SalaVideoEnVivo
-          modo="espectador"
-          nombre="Panel"
+        <LiveStream
+          whepUrl={MEDIAMTX_WHEP_URL}
           alto={variante === "grande" ? "260px" : "170px"}
         />
       )}

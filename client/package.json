@@ -9,8 +9,6 @@
     "preview": "vite preview --host"
   },
   "dependencies": {
-    "@cloudflare/realtimekit-react": "^1.5.1",
-    "@cloudflare/realtimekit-react-ui": "^1.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "socket.io-client": "^4.7.5"

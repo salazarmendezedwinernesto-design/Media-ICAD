@@ -1,14 +1,14 @@
 import React from "react";
-import SalaVideoEnVivo from "./SalaVideoEnVivo";
+import { MEDIAMTX_WHEP_URL } from "./config";
+import LiveStream from "./LiveStream";
 
-// Página pública (SIN login) pensada para meterse como Browser Source en
-// OBS Studio o vMix. Se conecta directo a la sala de video en vivo como
-// espectador (WebRTC, casi cero latencia) usando el token público que
-// solo permite ver, nunca publicar.
+// Pagina publica (SIN login) pensada para meterse como Browser Source en
+// OBS Studio o vMix. Se conecta directo por WHEP al servidor MediaMTX,
+// sin pasar por Render ni por ningun login.
 export default function Presentar() {
   return (
     <div style={styles.container}>
-      <SalaVideoEnVivo modo="espectador" nombre="Presentar" alto="100vh" />
+      <LiveStream whepUrl={MEDIAMTX_WHEP_URL} alto="100vh" />
     </div>
   );
 }

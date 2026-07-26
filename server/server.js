@@ -25,6 +25,16 @@ const io = new Server(httpServer, {
     origin: "https://crew-nexus.web.app", // Coherencia con el frontend (sin barra al final)
     methods: ["GET", "POST"],
   },
+  // Los celulares "congelan" el JS de la pestaña (o la mandan a segundo
+  // plano de verdad) cuando se bloquea la pantalla, así que unos segundos
+  // sin responder al ping NO significan que la persona se fue realmente.
+  // Con los valores por defecto (pingInterval 25s / pingTimeout 20s) el
+  // servidor los daba de baja casi apenas se bloqueaba el teléfono. Con
+  // esto le damos ~1 minuto de margen antes de considerar la conexión
+  // perdida de verdad (el cliente igual reconecta e re-anuncia solo si
+  // llega a caerse, ver SalaAudio.jsx).
+  pingInterval: 25000,
+  pingTimeout: 60000,
 });
 
 // ===== VARIABLES =====

@@ -51,6 +51,10 @@ export default function SalaAudio({
   const [nombre, setNombre] = useState("");
   const [conectado, setConectado] = useState(false);
   const [miembros, setMiembros] = useState([]); // [{socketId, nombre, rol}]
+  // socketIds de personas que ACABAN de salir de la sala: se mantienen acá
+  // un instante extra (mientras dura la animación) para que su nombre se
+  // desvanezca en vez de desaparecer de golpe de la lista.
+  const [saliendoIds, setSaliendoIds] = useState(() => new Set());
   const [miSocketId, setMiSocketId] = useState(null);
   const [liveSocketId, setLiveSocketId] = useState(null);
   const [hablando, setHablando] = useState(false);
@@ -61,6 +65,9 @@ export default function SalaAudio({
   // socketIds (incluido el propio) cuyo audio está sonando AHORA MISMO,
   // medido por volumen real (no solo por tener el botón presionado).
   const [hablandoIds, setHablandoIds] = useState(() => new Set());
+  // true mientras el socket está caído y estamos reintentando reconectar
+  // solos (sin que la persona tenga que volver a tocar "entrar a sala").
+  const [reconectando, setReconectando] = useState(false);
 
   const socketRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -70,6 +77,37 @@ export default function SalaAudio({
   const audioCtxRef = useRef(null); // AudioContext compartido para los analizadores
   const analizadoresRef = useRef({}); // { socketId: AnalyserNode }
   const animacionVolumenRef = useRef(null); // id de requestAnimationFrame
+  const gateGainRef = useRef(null); // GainNode del noise-gate del audio local
+  // Cache { socketId: {nombre, rol} } con el último dato conocido de cada
+  // persona, para poder seguir mostrando su nombre un instante mientras
+  // se desvanece, aunque el servidor ya la haya sacado de la lista.
+  const miembrosInfoRef = useRef({});
+
+  // Datos de la sala actual, guardados en refs (no en state) para poder
+  // volver a unirnos exactamente igual después de una reconexión, sin
+  // depender de closures viejos de React.
+  const salaActualRef = useRef(null);
+  const nombreActualRef = useRef("");
+  // true SOLO cuando la persona tocó "Salir" a propósito. Sirve para
+  // distinguir un corte de red/pantalla bloqueada (hay que reconectar
+  // solos) de una salida real (ahí sí hay que apagar todo y no reintentar).
+  const saliendoManualRef = useRef(false);
+  // true después de la primerísima vez que el socket conecta; a partir de
+  // ahí, cualquier evento "connect" siguiente es una RECONEXIÓN y hay que
+  // volver a unirnos a la sala y renegociar el audio con los demás.
+  const yaConectadoUnaVezRef = useRef(false);
+
+  // Screen Wake Lock: evita que el celular apague/bloquee la pantalla
+  // mientras estamos en una sala, para que el walkie-talkie siga
+  // funcionando (los navegadores móviles cortan el mic/WebRTC cuando el
+  // teléfono se bloquea; esta es la única forma confiable de evitarlo
+  // desde una página web sin ser una app nativa).
+  const wakeLockRef = useRef(null);
+  // <audio> silencioso en loop: mantiene la sesión de audio "activa" a
+  // ojos del sistema operativo (especialmente iOS Safari), lo cual ayuda
+  // a que el navegador no congele tanto la pestaña si, aun con el Wake
+  // Lock, la pantalla llega a apagarse.
+  const audioMantenerVivoRef = useRef(null);
 
   // ---------- Detección de "quién está hablando" por volumen real ----------
   // Usa la Web Audio API: por cada stream (el propio o el de un peer
@@ -113,6 +151,7 @@ export default function SalaAudio({
   // analizador registrado y actualiza qué socketIds están sonando ahora.
   const iniciarLoopDeVolumen = () => {
     const UMBRAL = 14; // 0-255; ajustar si detecta de más o de menos
+    const UMBRAL_GATE = 10; // un poco más sensible que UMBRAL_GATE del indicador visual
 
     const paso = () => {
       const nuevosHablando = new Set();
@@ -124,6 +163,21 @@ export default function SalaAudio({
         for (let i = 0; i < datos.length; i++) suma += datos[i];
         const promedio = suma / datos.length;
         if (promedio > UMBRAL) nuevosHablando.add(socketId);
+
+        // Noise gate del audio local: solo abrimos cuando hay voz real
+        // por encima del umbral. La transición es suave (setTargetAtTime)
+        // para no producir clics ni cortes abruptos.
+        if (socketId === "yo" && gateGainRef.current) {
+          const ctx = audioCtxRef.current;
+          const objetivo = promedio > UMBRAL_GATE ? 1 : 0.06;
+          if (ctx) {
+            gateGainRef.current.gain.setTargetAtTime(
+              objetivo,
+              ctx.currentTime,
+              0.05,
+            );
+          }
+        }
       });
 
       setHablandoIds((anterior) => {
@@ -147,6 +201,65 @@ export default function SalaAudio({
     if (animacionVolumenRef.current) {
       cancelAnimationFrame(animacionVolumenRef.current);
       animacionVolumenRef.current = null;
+    }
+  };
+
+  // ---------- Mantener la sala viva con la pantalla bloqueada ----------
+  const pedirWakeLock = async () => {
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch (e) {
+      // Puede fallar si la pestaña no está visible en ese instante o el
+      // navegador no lo soporta; no es un error fatal, seguimos igual.
+      console.warn("No se pudo activar Wake Lock:", e);
+    }
+  };
+
+  const soltarWakeLock = async () => {
+    try {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+      }
+    } catch (e) {
+      /* ya se soltó solo o no existía */
+    } finally {
+      wakeLockRef.current = null;
+    }
+  };
+
+  // WAV silencioso de 1 muestra en base64: reproducirlo en loop hace que
+  // el sistema operativo (sobre todo iOS) trate la pestaña como si
+  // estuviera reproduciendo audio activamente, lo que reduce bastante las
+  // probabilidades de que congele/mate la conexión de WebRTC al bloquear
+  // la pantalla.
+  const SILENCIO_WAV =
+    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+
+  const iniciarAudioMantenerVivo = () => {
+    try {
+      if (!audioMantenerVivoRef.current) {
+        const el = new Audio(SILENCIO_WAV);
+        el.loop = true;
+        el.volume = 0; // por las dudas, además de ser silencio real
+        el.playsInline = true;
+        audioMantenerVivoRef.current = el;
+      }
+      audioMantenerVivoRef.current.play().catch(() => {
+        /* algunos navegadores bloquean el autoplay; se reintenta en
+           visibilitychange cuando vuelva a haber gesto/foco */
+      });
+    } catch (e) {
+      console.warn("No se pudo iniciar audio de mantenimiento:", e);
+    }
+  };
+
+  const detenerAudioMantenerVivo = () => {
+    if (audioMantenerVivoRef.current) {
+      audioMantenerVivoRef.current.pause();
+      audioMantenerVivoRef.current.src = "";
+      audioMantenerVivoRef.current = null;
     }
   };
 
@@ -183,7 +296,13 @@ export default function SalaAudio({
 
       const filtroPasoAlto = ctx.createBiquadFilter();
       filtroPasoAlto.type = "highpass";
-      filtroPasoAlto.frequency.value = 100; // corta ruido grave de ambiente
+      filtroPasoAlto.frequency.value = 120; // corta ruido grave de ambiente (aires, viento, murmullo)
+
+      // Filtro paso-bajo: corta el siseo/hiss agudo (ventiladores, aire,
+      // ruido eléctrico) que queda por fuera del rango normal de la voz.
+      const filtroPasoBajo = ctx.createBiquadFilter();
+      filtroPasoBajo.type = "lowpass";
+      filtroPasoBajo.frequency.value = 8000;
 
       const compresor = ctx.createDynamicsCompressor();
       compresor.threshold.value = -40;
@@ -192,11 +311,22 @@ export default function SalaAudio({
       compresor.attack.value = 0.003;
       compresor.release.value = 0.25;
 
+      // Noise gate: un GainNode cuyo volumen se controla desde el loop de
+      // volumen (más abajo). Mientras no se detecte voz real por encima
+      // del umbral, el gain baja casi a cero, así se corta el ruido de
+      // fondo residual entre palabras/silencios en vez de mandarlo tal
+      // cual por WebRTC.
+      const gate = ctx.createGain();
+      gate.gain.value = 1;
+      gateGainRef.current = gate;
+
       const destino = ctx.createMediaStreamDestination();
 
       fuente.connect(filtroPasoAlto);
-      filtroPasoAlto.connect(compresor);
-      compresor.connect(destino);
+      filtroPasoAlto.connect(filtroPasoBajo);
+      filtroPasoBajo.connect(compresor);
+      compresor.connect(gate);
+      gate.connect(destino);
 
       return destino.stream;
     } catch (e) {
@@ -267,6 +397,20 @@ export default function SalaAudio({
       }
       audioEl.srcObject = evento.streams[0];
       registrarAnalizador(otroSocketId, evento.streams[0]);
+    };
+
+    // Si el enlace P2P se corta (cambio de red, wifi<->datos, NAT que
+    // expira) pero el socket sigue vivo, intentamos reparar solo ese
+    // enlace con un ICE restart, sin tener que salir/reentrar a la sala.
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed") {
+        try {
+          if (typeof pc.restartIce === "function") pc.restartIce();
+        } catch (e) {
+          /* algunos navegadores viejos no lo soportan */
+        }
+        iniciarOfertaHacia(otroSocketId);
+      }
     };
 
     peersRef.current[otroSocketId] = pc;
@@ -346,7 +490,25 @@ export default function SalaAudio({
       return;
     }
 
-    const socket = io(SERVER_URL, { auth: { token: obtenerToken() } });
+    // Recordamos con qué datos entramos, para poder volver a unirnos
+    // exactamente igual si el socket se cae y se reconecta solo.
+    salaActualRef.current = numeroSala;
+    nombreActualRef.current = nombre.trim() || "Sin nombre";
+    saliendoManualRef.current = false;
+    yaConectadoUnaVezRef.current = false;
+
+    const socket = io(SERVER_URL, {
+      auth: { token: obtenerToken() },
+      // Reintenta reconectar solo, indefinidamente, con backoff. Esto es
+      // clave: un corte de red (wifi que cambia, datos móviles, teléfono
+      // bloqueado un rato) no debe sacar a la persona de la sala, solo
+      // debe reconectar en cuanto sea posible.
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+    });
     socketRef.current = socket;
 
     socket.on("connect_error", (err) => {
@@ -359,21 +521,68 @@ export default function SalaAudio({
       }
     });
 
+    // El socket se cayó (ping timeout, celular bloqueado, wifi caída,
+    // Render "durmiendo" el server, etc). Si NO fue porque la persona
+    // tocó "Salir", nos quedamos DENTRO de la sala (no reseteamos la UI)
+    // mostrando "reconectando" mientras socket.io reintenta solo.
+    socket.on("disconnect", (razon) => {
+      if (saliendoManualRef.current) return;
+      setReconectando(true);
+      setMiembros([]);
+      cerrarTodosLosPeers();
+    });
+
+    // Se logró reconectar (o es la primera conexión). En reconexiones hay
+    // que anunciarse de nuevo a la sala: el socket tiene un id nuevo, así
+    // que el servidor no sabe que ya éramos parte de esa sala.
+    socket.on("connect", () => {
+      if (yaConectadoUnaVezRef.current && salaActualRef.current) {
+        socket.emit("audio:unirse", {
+          sala: salaActualRef.current,
+          nombre: nombreActualRef.current,
+          rol: rolEtiqueta,
+        });
+      }
+      yaConectadoUnaVezRef.current = true;
+    });
+
     socket.on("audio:estado_sala", (datos) => {
       setMiSocketId(datos.socketId);
       setLiveSocketId(datos.liveSocketId || null);
       datos.participantes.forEach((p) => iniciarOfertaHacia(p.socketId));
       setConectando(false);
+      setReconectando(false);
       setSala(numeroSala);
       setConectado(true);
+      pedirWakeLock();
+      iniciarAudioMantenerVivo();
     });
 
     socket.on("audio:lista_sala", (datos) => {
+      datos.miembros.forEach((m) => {
+        miembrosInfoRef.current[m.socketId] = { nombre: m.nombre, rol: m.rol };
+      });
       setMiembros(datos.miembros);
     });
 
     socket.on("audio:participante_salio", (datos) => {
       cerrarPeer(datos.socketId);
+      // Marcamos a esta persona como "saliendo" para que su nombre se
+      // desvanezca con una animación en vez de desaparecer de golpe.
+      setSaliendoIds((anterior) => {
+        const nuevo = new Set(anterior);
+        nuevo.add(datos.socketId);
+        return nuevo;
+      });
+      setTimeout(() => {
+        setSaliendoIds((anterior) => {
+          if (!anterior.has(datos.socketId)) return anterior;
+          const nuevo = new Set(anterior);
+          nuevo.delete(datos.socketId);
+          return nuevo;
+        });
+        delete miembrosInfoRef.current[datos.socketId];
+      }, 400);
     });
 
     socket.on("audio:live_actualizado", (datos) => {
@@ -413,6 +622,7 @@ export default function SalaAudio({
   };
 
   const salirDeSala = () => {
+    saliendoManualRef.current = true;
     if (socketRef.current) {
       socketRef.current.emit("audio:salir");
       socketRef.current.disconnect();
@@ -421,6 +631,9 @@ export default function SalaAudio({
     cerrarTodosLosPeers();
     detenerLoopDeVolumen();
     quitarAnalizador("yo");
+    soltarWakeLock();
+    detenerAudioMantenerVivo();
+    gateGainRef.current = null;
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
@@ -429,9 +642,13 @@ export default function SalaAudio({
       localStreamCrudoRef.current.getTracks().forEach((t) => t.stop());
       localStreamCrudoRef.current = null;
     }
+    salaActualRef.current = null;
+    miembrosInfoRef.current = {};
     setSala(null);
     setConectado(false);
+    setReconectando(false);
     setMiembros([]);
+    setSaliendoIds(new Set());
     setLiveSocketId(null);
     setHablando(false);
     setHablandoIds(new Set());
@@ -439,12 +656,15 @@ export default function SalaAudio({
 
   useEffect(() => {
     return () => {
+      saliendoManualRef.current = true;
       if (socketRef.current) {
         socketRef.current.emit("audio:salir");
         socketRef.current.disconnect();
       }
       cerrarTodosLosPeers();
       detenerLoopDeVolumen();
+      soltarWakeLock();
+      detenerAudioMantenerVivo();
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
       }
@@ -458,6 +678,28 @@ export default function SalaAudio({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-solicita el Wake Lock cuando la pestaña vuelve a estar visible: el
+  // navegador lo suelta automáticamente al pasar a segundo plano, así que
+  // hay que pedirlo de nuevo apenas la persona vuelve a mirar la pantalla
+  // (por ejemplo, al desbloquear el celular). También reintenta el audio
+  // de mantenimiento por si el sistema lo pausó.
+  useEffect(() => {
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === "visible" && conectado) {
+        pedirWakeLock();
+        if (audioMantenerVivoRef.current) {
+          audioMantenerVivoRef.current.play().catch(() => {});
+        }
+        if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+          audioCtxRef.current.resume().catch(() => {});
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", alCambiarVisibilidad);
+    return () =>
+      document.removeEventListener("visibilitychange", alCambiarVisibilidad);
+  }, [conectado]);
 
   const empezarAHablar = () => {
     if (!micPermitido || !localStreamRef.current) return;
@@ -516,6 +758,15 @@ export default function SalaAudio({
     socketRef.current.emit("audio:marcar_live", { sala, socketId: nuevoLive });
   };
 
+  // Lista que realmente se dibuja: los miembros activos + los que se
+  // acaban de ir (tomados del cache), solo mientras dura su animación de
+  // desvanecido. Así el nombre no desaparece de golpe al salir alguien.
+  const idsActivos = new Set(miembros.map((m) => m.socketId));
+  const miembrosSaliendo = [...saliendoIds]
+    .filter((id) => !idsActivos.has(id) && miembrosInfoRef.current[id])
+    .map((id) => ({ socketId: id, ...miembrosInfoRef.current[id] }));
+  const miembrosParaMostrar = [...miembros, ...miembrosSaliendo];
+
   // ================= MODO COMPACTO (conectado, conviviendo con el chat) =================
   // Se usa una vez que ya estás dentro de una sala y la pantalla padre
   // pasó compacta=true: en vez de tapar toda la pantalla, se muestra como
@@ -558,17 +809,24 @@ export default function SalaAudio({
           </div>
         </div>
 
+        {reconectando && (
+          <p style={styles.textoReconectando}>
+            <span style={styles.spinner} /> Conexión inestable, reconectando…
+          </p>
+        )}
+
         {!minimizada && (
           <>
             {error && <p style={styles.textoError}>⚠ {error}</p>}
 
             <div style={styles.compactaListaMiembros}>
-              {miembros.map((m) => {
+              {miembrosParaMostrar.map((m) => {
                 const enVivo = liveSocketId === m.socketId;
                 const soyYo = m.socketId === miSocketId;
                 const estaHablando = soyYo
                   ? hablandoIds.has("yo")
                   : hablandoIds.has(m.socketId);
+                const estaSaliendo = saliendoIds.has(m.socketId);
                 return (
                   <div
                     key={m.socketId}
@@ -576,9 +834,12 @@ export default function SalaAudio({
                       ...styles.compactaChipMiembro,
                       ...(enVivo ? styles.compactaChipEnVivo : {}),
                       ...(estaHablando ? styles.compactaChipHablando : {}),
+                      ...(estaSaliendo ? styles.chipSaliendo : {}),
                       cursor: esDirector ? "pointer" : "default",
                     }}
-                    onClick={() => esDirector && marcarEnVivo(m.socketId)}
+                    onClick={() =>
+                      esDirector && !estaSaliendo && marcarEnVivo(m.socketId)
+                    }
                   >
                     <span style={styles.puntoEstado(enVivo)} />
                     <span style={styles.compactaChipTexto}>
@@ -722,16 +983,22 @@ export default function SalaAudio({
         </button>
       </div>
 
+      {reconectando && (
+        <p style={styles.textoReconectando}>
+          <span style={styles.spinner} /> Conexión inestable, reconectando…
+        </p>
+      )}
+
       {error && <p style={styles.textoError}>⚠ {error}</p>}
 
       <div style={styles.listaMiembros}>
-        {miembros.length === 0 && (
+        {miembrosParaMostrar.length === 0 && (
           <div style={styles.vacioListaCaja}>
             <span style={styles.vacioListaIcono}>👋</span>
             <p style={styles.vacioLista}>Esperando a que otros se unan...</p>
           </div>
         )}
-        {miembros.map((m) => {
+        {miembrosParaMostrar.map((m) => {
           const enVivo = liveSocketId === m.socketId;
           const soyYo = m.socketId === miSocketId;
           // "yo" se registra con la clave especial "yo" en el analizador
@@ -739,6 +1006,7 @@ export default function SalaAudio({
           const estaHablando = soyYo
             ? hablandoIds.has("yo")
             : hablandoIds.has(m.socketId);
+          const estaSaliendo = saliendoIds.has(m.socketId);
           return (
             <div
               key={m.socketId}
@@ -746,9 +1014,12 @@ export default function SalaAudio({
                 ...styles.filaMiembro,
                 ...(enVivo ? styles.filaMiembroEnVivo : {}),
                 ...(estaHablando ? styles.filaMiembroHablando : {}),
+                ...(estaSaliendo ? styles.filaSaliendo : {}),
                 cursor: esDirector ? "pointer" : "default",
               }}
-              onClick={() => esDirector && marcarEnVivo(m.socketId)}
+              onClick={() =>
+                esDirector && !estaSaliendo && marcarEnVivo(m.socketId)
+              }
             >
               <span style={styles.puntoEstado(enVivo)} />
               <span style={styles.etiquetaMiembro}>
@@ -958,6 +1229,19 @@ const styles = {
     fontWeight: "600",
     marginTop: "12px",
   },
+  textoReconectando: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: "#ffca28",
+    fontSize: "0.85rem",
+    fontWeight: "700",
+    backgroundColor: "rgba(255, 202, 40, 0.12)",
+    border: "1px solid rgba(255, 202, 40, 0.4)",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    marginTop: "8px",
+  },
   listaMiembros: {
     flex: 1,
     display: "flex",
@@ -987,7 +1271,18 @@ const styles = {
     borderRadius: "14px",
     backgroundColor: "rgba(255,255,255,0.04)",
     border: "1px solid rgba(255,255,255,0.07)",
-    transition: "background-color 0.15s ease, border-color 0.15s ease",
+    transition:
+      "background-color 0.15s ease, border-color 0.15s ease, " +
+      "opacity 0.35s ease, transform 0.35s ease",
+    opacity: 1,
+    transform: "scale(1)",
+  },
+  // Se aplica un instante, cuando alguien acaba de salir de la sala: el
+  // nombre se desvanece y encoge en vez de desaparecer de golpe.
+  filaSaliendo: {
+    opacity: 0,
+    transform: "scale(0.92)",
+    pointerEvents: "none",
   },
   filaMiembroEnVivo: {
     backgroundColor: "rgba(0, 200, 83, 0.12)",
@@ -1203,7 +1498,17 @@ const styles = {
     backgroundColor: "rgba(255,255,255,0.05)",
     border: "1px solid rgba(255,255,255,0.08)",
     fontSize: "0.78rem",
-    transition: "border-color 0.1s ease, box-shadow 0.1s ease",
+    transition:
+      "border-color 0.1s ease, box-shadow 0.1s ease, " +
+      "opacity 0.35s ease, transform 0.35s ease",
+    opacity: 1,
+    transform: "scale(1)",
+  },
+  // Igual que filaSaliendo pero para la franja compacta.
+  chipSaliendo: {
+    opacity: 0,
+    transform: "scale(0.9)",
+    pointerEvents: "none",
   },
   compactaChipEnVivo: {
     backgroundColor: "rgba(0, 200, 83, 0.14)",

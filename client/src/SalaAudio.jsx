@@ -68,6 +68,10 @@ export default function SalaAudio({
   // true mientras el socket está caído y estamos reintentando reconectar
   // solos (sin que la persona tenga que volver a tocar "entrar a sala").
   const [reconectando, setReconectando] = useState(false);
+  // true cuando el navegador bloqueó la reproducción automática del audio
+  // de algún participante (pasa sobre todo en iOS/Safari). Mostramos un
+  // botón para que, con un toque, se desbloquee.
+  const [necesitaActivarAudio, setNecesitaActivarAudio] = useState(false);
 
   const socketRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -382,6 +386,8 @@ export default function SalaAudio({
         audioEl = document.createElement("audio");
         audioEl.autoplay = true;
         audioEl.playsInline = true;
+        audioEl.muted = false;
+        audioEl.volume = 1;
         // Reduce el buffer interno de reproducción del navegador: por
         // defecto algunos navegadores bufferean un poco el audio entrante
         // para evitar cortes, lo cual se siente como latencia agregada.
@@ -397,6 +403,20 @@ export default function SalaAudio({
       }
       audioEl.srcObject = evento.streams[0];
       registrarAnalizador(otroSocketId, evento.streams[0]);
+
+      // El atributo "autoplay" no siempre alcanza: si este <audio> se
+      // crea de forma asíncrona (después de la señalización WebRTC) y el
+      // navegador ya no lo considera "dentro" del gesto del usuario que
+      // tocó "Entrar a sala", bloquea la reproducción SIN avisar con
+      // ningún error visible: el stream llega perfecto pero no suena
+      // nada. Forzamos el play() explícito y, si el navegador lo
+      // rechaza, mostramos un botón para desbloquearlo con un toque.
+      const intento = audioEl.play();
+      if (intento && typeof intento.catch === "function") {
+        intento.catch(() => {
+          setNecesitaActivarAudio(true);
+        });
+      }
     };
 
     // Si el enlace P2P se corta (cambio de red, wifi<->datos, NAT que
@@ -422,12 +442,31 @@ export default function SalaAudio({
   // silencios) y fija un tamaño de paquete chico (ptime), que es lo que
   // más influye en la sensación de "delay" al hablar por walkie-talkie.
   const forzarBajaLatenciaEnSDP = (sdp) => {
-    return sdp.replace(
-      /(a=rtpmap:(\d+) opus\/48000\/2\r?\n)/gi,
-      (match, linea, pt) => {
-        return `${linea}a=fmtp:${pt} minptime=10;ptime=10;maxptime=20;useinbandfec=1;usedtx=0\r\n`;
-      },
+    // Chrome/Firefox casi siempre agregan su propia línea "a=fmtp" para
+    // opus justo después del rtpmap (con sus valores por defecto). Si
+    // solo insertábamos una línea nueva sin sacar esa, quedaban DOS
+    // "a=fmtp" para el mismo códec: algunos navegadores rechazan eso al
+    // aplicar la descripción (setLocalDescription/setRemoteDescription
+    // fallan calladitos) y la llamada nunca llega a conectar el audio.
+    // Por eso primero identificamos el payload type de opus y reemplazamos
+    // su fmtp existente en vez de agregar uno nuevo.
+    const pts = [...sdp.matchAll(/a=rtpmap:(\d+) opus\/48000\/2\r?\n/gi)].map(
+      (m) => m[1],
     );
+    let resultado = sdp;
+    pts.forEach((pt) => {
+      const nuevaLinea = `a=fmtp:${pt} minptime=10;ptime=10;maxptime=20;useinbandfec=1;usedtx=0\r\n`;
+      const regexFmtpExistente = new RegExp(`a=fmtp:${pt} [^\r\n]*\r?\n`, "i");
+      if (regexFmtpExistente.test(resultado)) {
+        resultado = resultado.replace(regexFmtpExistente, nuevaLinea);
+      } else {
+        resultado = resultado.replace(
+          new RegExp(`(a=rtpmap:${pt} opus\\/48000\\/2\\r?\\n)`, "i"),
+          `$1${nuevaLinea}`,
+        );
+      }
+    });
+    return resultado;
   };
 
   const iniciarOfertaHacia = async (otroSocketId) => {
@@ -652,6 +691,7 @@ export default function SalaAudio({
     setLiveSocketId(null);
     setHablando(false);
     setHablandoIds(new Set());
+    setNecesitaActivarAudio(false);
   };
 
   useEffect(() => {
@@ -758,6 +798,25 @@ export default function SalaAudio({
     socketRef.current.emit("audio:marcar_live", { sala, socketId: nuevoLive });
   };
 
+  // Se llama desde un botón (o sea, con un toque real del usuario) para
+  // desbloquear la reproducción de todos los audios entrantes que el
+  // navegador haya frenado por su política de autoplay.
+  const activarAudioManual = () => {
+    if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+      audioCtxRef.current.resume().catch(() => {});
+    }
+    let algunoFallo = false;
+    Object.values(audiosRef.current).forEach((audioEl) => {
+      const intento = audioEl.play();
+      if (intento && typeof intento.catch === "function") {
+        intento.catch(() => {
+          algunoFallo = true;
+        });
+      }
+    });
+    if (!algunoFallo) setNecesitaActivarAudio(false);
+  };
+
   // Lista que realmente se dibuja: los miembros activos + los que se
   // acaban de ir (tomados del cache), solo mientras dura su animación de
   // desvanecido. Así el nombre no desaparece de golpe al salir alguien.
@@ -813,6 +872,12 @@ export default function SalaAudio({
           <p style={styles.textoReconectando}>
             <span style={styles.spinner} /> Conexión inestable, reconectando…
           </p>
+        )}
+
+        {necesitaActivarAudio && (
+          <button style={styles.btnActivarAudio} onClick={activarAudioManual}>
+            🔊 Tocá para activar el audio
+          </button>
         )}
 
         {!minimizada && (
@@ -987,6 +1052,12 @@ export default function SalaAudio({
         <p style={styles.textoReconectando}>
           <span style={styles.spinner} /> Conexión inestable, reconectando…
         </p>
+      )}
+
+      {necesitaActivarAudio && (
+        <button style={styles.btnActivarAudio} onClick={activarAudioManual}>
+          🔊 Tocá para activar el audio
+        </button>
       )}
 
       {error && <p style={styles.textoError}>⚠ {error}</p>}
@@ -1241,6 +1312,22 @@ const styles = {
     borderRadius: "10px",
     padding: "8px 12px",
     marginTop: "8px",
+  },
+  btnActivarAudio: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    width: "100%",
+    color: "#0f1115",
+    fontSize: "0.85rem",
+    fontWeight: "800",
+    backgroundColor: "#ffca28",
+    border: "none",
+    borderRadius: "10px",
+    padding: "10px 12px",
+    marginTop: "8px",
+    cursor: "pointer",
   },
   listaMiembros: {
     flex: 1,

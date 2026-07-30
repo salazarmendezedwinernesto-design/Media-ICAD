@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { SERVER_URL, MEDIAMTX_RTMP_URL, MEDIAMTX_STREAM_KEY, MEDIAMTX_WHEP_URL } from "./config";
+import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
-import LiveStream from "./LiveStream";
+import { detectarEnlace } from "./EnlaceExterno";
 
 export default function Moderador({ alSalir }) {
   const [desbloqueado, setDesbloqueado] = useState(
@@ -11,8 +11,10 @@ export default function Moderador({ alSalir }) {
   const [contrasena, setContrasena] = useState("");
   const [errorClave, setErrorClave] = useState("");
   const [verificando, setVerificando] = useState(false);
-  const [transmision, setTransmision] = useState({ activa: false });
-  const [copiado, setCopiado] = useState("");
+
+  const [enlace, setEnlace] = useState({ activo: false, url: null });
+  const [campoUrl, setCampoUrl] = useState("");
+  const [errorUrl, setErrorUrl] = useState("");
 
   const socketRef = useRef(null);
 
@@ -55,22 +57,33 @@ export default function Moderador({ alSalir }) {
       }
     });
 
-    socket.on("transmision:estado", (datos) => {
-      if (datos) setTransmision(datos);
+    socket.on("enlace:estado", (datos) => {
+      if (datos) setEnlace(datos);
     });
 
     return () => socket.disconnect();
   }, [desbloqueado]);
 
-  const copiar = async (texto, etiqueta) => {
-    try {
-      await navigator.clipboard.writeText(texto);
-      setCopiado(etiqueta);
-      setTimeout(() => setCopiado(""), 2000);
-    } catch {
-      // Si el navegador bloquea el portapapeles, el usuario igual puede
-      // seleccionar el texto manualmente; no hacemos nada más.
+  const publicarEnlace = (e) => {
+    e.preventDefault();
+    setErrorUrl("");
+
+    const info = detectarEnlace(campoUrl);
+    if (!info) {
+      setErrorUrl("Ese link no parece de YouTube ni de Facebook. Revísalo e intenta de nuevo.");
+      return;
     }
+
+    socketRef.current?.emit("enlace:publicar", {
+      url: campoUrl.trim(),
+      tipo: info.tipo,
+      de: "Moderador",
+    });
+    setCampoUrl("");
+  };
+
+  const quitarEnlace = () => {
+    socketRef.current?.emit("enlace:quitar");
   };
 
   if (!desbloqueado) {
@@ -114,6 +127,8 @@ export default function Moderador({ alSalir }) {
     );
   }
 
+  const infoActual = enlace.activo ? detectarEnlace(enlace.url) : null;
+
   return (
     <div style={styles.container}>
       <header style={styles.navbar}>
@@ -126,51 +141,66 @@ export default function Moderador({ alSalir }) {
 
       <section style={styles.tarjeta}>
         <span style={styles.tituloSeccion}>
-          {transmision.activa ? "🔴 EN VIVO (detectado automáticamente)" : "⚪ SIN SEÑAL"}
+          {enlace.activo ? "🔴 ENLACE ACTIVO EN TODOS LOS PANELES" : "⚪ SIN ENLACE PUBLICADO"}
         </span>
         <p style={styles.notaAyuda}>
-          No hay que darle a ningún botón de "iniciar": en cuanto OBS Studio
-          o vMix empiecen a transmitir a la dirección de abajo, esta pantalla
-          (y todos los paneles) lo detectan solos. Cuando cortes la
-          transmisión en OBS/vMix, desaparece sola en todos lados — no queda
-          nada guardado.
+          Pega aquí un link de YouTube o Facebook (una transmisión en
+          vivo, un video, lo que sea) y aparecerá automáticamente en
+          Director, Cámaras, Pastor, Líder y Pantalla. Cuando quieras
+          quitarlo, desaparece solo en todos lados — no queda nada
+          guardado.
         </p>
+
+        <form onSubmit={publicarEnlace} style={styles.formulario}>
+          <input
+            type="text"
+            value={campoUrl}
+            onChange={(e) => setCampoUrl(e.target.value)}
+            placeholder="Pega aquí el link de YouTube o Facebook..."
+            style={styles.input}
+          />
+          {errorUrl && (
+            <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>{errorUrl}</p>
+          )}
+          <button
+            type="submit"
+            disabled={!campoUrl.trim()}
+            style={{ ...styles.btnPrimario, opacity: !campoUrl.trim() ? 0.4 : 1 }}
+          >
+            📡 Publicar en todos los paneles
+          </button>
+        </form>
+
+        {enlace.activo && (
+          <button style={styles.btnQuitar} onClick={quitarEnlace}>
+            ✖️ Quitar enlace de todos los paneles
+          </button>
+        )}
       </section>
 
-      <section style={styles.tarjeta}>
-        <span style={styles.tituloSeccion}>⚙️ CONFIGURA ESTO EN OBS STUDIO / VMIX</span>
-
-        <div style={styles.campo}>
-          <label style={styles.etiqueta}>Servidor (Server)</label>
-          <div style={styles.filaCopiar}>
-            <code style={styles.codigo}>{MEDIAMTX_RTMP_URL}</code>
-            <button style={styles.btnCopiar} onClick={() => copiar(MEDIAMTX_RTMP_URL, "servidor")}>
-              {copiado === "servidor" ? "✅" : "Copiar"}
-            </button>
-          </div>
-        </div>
-
-        <div style={styles.campo}>
-          <label style={styles.etiqueta}>Clave de transmisión (Stream Key)</label>
-          <div style={styles.filaCopiar}>
-            <code style={styles.codigo}>{MEDIAMTX_STREAM_KEY}</code>
-            <button style={styles.btnCopiar} onClick={() => copiar(MEDIAMTX_STREAM_KEY, "clave")}>
-              {copiado === "clave" ? "✅" : "Copiar"}
-            </button>
-          </div>
-        </div>
-
-        <p style={styles.notaAyuda}>
-          En OBS: Configuración → Emisión → Servicio: "Personalizado" →
-          pega el Servidor y la Clave. En vMix: Configuración de
-          Transmisión → Servidor Personalizado (RTMP) → los mismos datos.
-        </p>
-      </section>
-
-      {transmision.activa && (
+      {enlace.activo && infoActual && (
         <section style={styles.tarjeta}>
-          <span style={styles.tituloSeccion}>👁️ VISTA PREVIA</span>
-          <LiveStream whepUrl={MEDIAMTX_WHEP_URL} alto="280px" />
+          <span style={styles.tituloSeccion}>👁️ VISTA PREVIA (así lo ven todos)</span>
+          <div style={styles.marcoPrevia}>
+            <iframe
+              key={infoActual.embedUrl}
+              src={infoActual.embedUrl}
+              title="Vista previa del enlace"
+              style={styles.iframePrevia}
+              frameBorder="0"
+              allow="autoplay; encrypted-media; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+        </section>
+      )}
+
+      {enlace.activo && !infoActual && (
+        <section style={styles.tarjeta}>
+          <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>
+            Hay un enlace publicado pero no se pudo interpretar como
+            YouTube ni Facebook. Quítalo y publica uno nuevo.
+          </p>
         </section>
       )}
     </div>
@@ -230,7 +260,7 @@ const styles = {
     outline: "none",
   },
   btnPrimario: {
-    backgroundColor: "#dc2626",
+    backgroundColor: "#2563eb",
     color: "#fff",
     border: "none",
     borderRadius: "8px",
@@ -239,28 +269,26 @@ const styles = {
     fontWeight: "bold",
     cursor: "pointer",
   },
-  notaAyuda: { fontSize: "0.75rem", color: "#6b7280", margin: 0, lineHeight: 1.5 },
-  campo: { display: "flex", flexDirection: "column", gap: "6px" },
-  filaCopiar: { display: "flex", gap: "8px", alignItems: "center" },
-  codigo: {
-    flex: 1,
-    backgroundColor: "#0b0c10",
-    border: "1px solid #2d303f",
-    borderRadius: "8px",
-    padding: "12px",
-    fontSize: "0.85rem",
-    color: "#34d399",
-    wordBreak: "break-all",
-  },
-  btnCopiar: {
-    backgroundColor: "#374151",
+  btnQuitar: {
+    backgroundColor: "#dc2626",
     color: "#fff",
     border: "none",
     borderRadius: "8px",
-    padding: "12px 14px",
-    fontSize: "0.85rem",
-    fontWeight: "600",
+    padding: "12px",
+    fontSize: "0.9rem",
+    fontWeight: "bold",
     cursor: "pointer",
-    flexShrink: 0,
+  },
+  notaAyuda: { fontSize: "0.75rem", color: "#6b7280", margin: 0, lineHeight: 1.5 },
+  marcoPrevia: {
+    borderRadius: "8px",
+    overflow: "hidden",
+    aspectRatio: "16 / 9",
+    backgroundColor: "#000",
+  },
+  iframePrevia: {
+    width: "100%",
+    height: "100%",
+    display: "block",
   },
 };

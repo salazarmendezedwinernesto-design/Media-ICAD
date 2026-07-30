@@ -182,6 +182,19 @@ let transmision = {
   inicio: null,
 };
 
+// ===== ENLACE EXTERNO (YouTube / Facebook) =====
+// El Moderador pega un link de YouTube o Facebook y este servidor lo
+// reparte a TODOS los paneles conectados (Director, Cámara, Pastor,
+// Líder, Pantalla) y también de vuelta al propio Moderador, para que
+// pueda confirmar que se ve bien. Se guarda SOLO en memoria: si el
+// Moderador lo quita, o el servidor se reinicia, desaparece por completo.
+let enlaceExterno = {
+  activo: false,
+  url: null,
+  publicadoPor: null,
+  inicio: null,
+};
+
 // Bus general de mensajería: lo usan Director, Cámara, Líder y Pantalla
 // para mandarse texto libre entre sí. Valida destinatarios y emite solo a quienes les corresponde.
 function difundirMensajeBus(datos) {
@@ -291,6 +304,10 @@ io.on("connection", (socket) => {
   // al próximo evento del moderador.
   socket.emit("transmision:estado", transmision);
 
+  // Y el estado actual del enlace externo (YouTube/Facebook), por si el
+  // Moderador ya lo había publicado antes de que este cliente entrara.
+  socket.emit("enlace:estado", enlaceExterno);
+
   // --- Director -> Cámara individual (tally: live/preview/standby + mensaje) ---
   socket.on("enviar_orden_director", (datos) => {
     if (!datos || datos.camara === undefined) return;
@@ -374,6 +391,31 @@ io.on("connection", (socket) => {
   socket.on("transmision:finalizar", () => {
     transmision = { activa: false, iniciadaPor: null, inicio: null };
     io.emit("transmision:estado", transmision);
+  });
+
+  // ===== ENLACE EXTERNO (YouTube / Facebook) =====
+
+  // --- Moderador -> Todos: publica un link de YouTube o Facebook ---
+  // datos: { url, tipo: "youtube"|"facebook", de }
+  // El servidor no valida el link (eso ya lo hace el panel del Moderador
+  // antes de mandarlo); solo lo guarda y lo reparte a todos.
+  socket.on("enlace:publicar", (datos) => {
+    if (!datos || !datos.url) return;
+    enlaceExterno = {
+      activo: true,
+      url: String(datos.url).trim(),
+      tipo: datos.tipo || null,
+      publicadoPor: datos.de || socket.usuario || "Moderador",
+      inicio: Date.now(),
+    };
+    io.emit("enlace:estado", enlaceExterno);
+  });
+
+  // --- Moderador -> Todos: quita el enlace publicado ---
+  // Se BORRA por completo (nada queda guardado), igual que la transmisión.
+  socket.on("enlace:quitar", () => {
+    enlaceExterno = { activo: false, url: null, tipo: null, publicadoPor: null, inicio: null };
+    io.emit("enlace:estado", enlaceExterno);
   });
 
   // ===== EVENTOS DE SALA DE AUDIO =====

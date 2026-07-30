@@ -2,454 +2,1505 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
-import SalaAudio from "./SalaAudio";
-import BarraTransmision from "./BarraTransmision";
 
-const SOCKET_URL = SERVER_URL;
+const SALAS = ["1", "2", "3", "4", "5"];
 
-const DESTINATARIOS_LIDER = [
-  "Director",
-  "Pastor",
-  "Pantalla",
-  "C1",
-  "C2",
-  "C3",
-  "C4",
-  "C5",
-  "C6",
+// STUN público de Google: ayuda a dos dispositivos a encontrarse a través
+// de NAT/routers domésticos. Si tu red (ej. wifi de iglesia con firewall
+// estricto) bloquea la conexión directa, agrega aquí un servidor TURN
+// propio o de un proveedor (Twilio, Metered, coturn propio) como respaldo.
+// Sin TURN, en redes muy restrictivas la llamada podría no lograr conectar.
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  // { urls: "turn:tu-servidor-turn.com:3478", username: "user", credential: "pass" },
 ];
 
-const FRASES_RAPIDAS_LIDER = [
-  "ATENTOS CÁMARAS",
-  "CAMBIO DE ÁNGULO",
-  "BUEN TRABAJO",
-  "RECIBIDO PASTOR",
-  "RECIBIDO DIRECTOR",
-];
-
-export default function Lider({ alSalir }) {
-  const [destinatarios, setDestinatarios] = useState([]);
-  const [textoMensaje, setTextoMensaje] = useState("");
-  const [mensajesRecibidos, setMensajesRecibidos] = useState([]);
-  const [estadosCamaras, setEstadosCamaras] = useState({
-    1: "standby",
-    2: "standby",
-    3: "standby",
-    4: "standby",
-    5: "standby",
-    6: "standby",
-  });
-  const [confirmacion, setConfirmacion] = useState("");
-  const [permitirParpadeo, setPermitirParpadeo] = useState(true);
-  const [mostrarAudio, setMostrarAudio] = useState(false);
+/**
+ * Panel de sala de audio (walkie-talkie por WebRTC), reutilizable desde
+ * cualquier rol (Director, Camara, Pastor, Lider, Pantalla).
+ *
+ * - El audio viaja DIRECTO entre dispositivos (peer-to-peer / WebRTC),
+ *   nunca pasa por nuestro servidor, así la latencia se mantiene mínima.
+ * - El servidor (Socket.IO) solo "presenta" a los dispositivos entre sí
+ *   (signaling): ofertas/respuestas SDP, candidatos ICE, lista de la sala.
+ * - Push-to-talk: mantener presionado para hablar; la conexión queda
+ *   siempre abierta, solo se habilita/deshabilita la pista de audio local
+ *   (cero retraso al presionar, sin reconexiones).
+ *
+ * Props:
+ *  - rolEtiqueta: de dónde entra la persona, ej. "Cámara 1", "Pastor",
+ *    "Líder", "Director", "Pantalla". Se muestra junto al nombre.
+ *  - esDirector: si es true, puede tocar a otros para marcarlos en vivo
+ *    (verde) dentro de la sala. Solo uno a la vez.
+ *  - alSalir: callback para cerrar este panel y volver al rol.
+ *  - compacta: si es true, una vez conectado a la sala se muestra como
+ *    una franja integrada en el flujo normal de la pantalla (no tapa el
+ *    resto de la pantalla), para poder seguir viendo y usando el chat de
+ *    texto al mismo tiempo. La pantalla de selección de sala (antes de
+ *    conectarse) sigue mostrándose en pantalla completa, ya que ahí sí
+ *    necesita la atención completa de la persona por un momento.
+ */
+export default function SalaAudio({
+  rolEtiqueta,
+  esDirector = false,
+  alSalir,
+  compacta = false,
+}) {
+  const [sala, setSala] = useState(null); // "1".."5" o null = pantalla de selección
+  const [nombre, setNombre] = useState("");
+  const [conectado, setConectado] = useState(false);
+  const [miembros, setMiembros] = useState([]); // [{socketId, nombre, rol}]
+  const [miSocketId, setMiSocketId] = useState(null);
+  const [liveSocketId, setLiveSocketId] = useState(null);
+  const [hablando, setHablando] = useState(false);
+  const [micPermitido, setMicPermitido] = useState(true);
+  const [conectando, setConectando] = useState(false);
+  const [error, setError] = useState("");
+  const [minimizada, setMinimizada] = useState(false); // solo aplica en modo compacto
+  // socketIds (incluido el propio) cuyo audio está sonando AHORA MISMO,
+  // medido por volumen real (no solo por tener el botón presionado).
+  const [hablandoIds, setHablandoIds] = useState(() => new Set());
+  // true mientras el socket está caído y estamos reintentando reconectar
+  // solos (sin que la persona tenga que volver a tocar "entrar a sala").
+  const [reconectando, setReconectando] = useState(false);
 
   const socketRef = useRef(null);
-  const temporizadorParpadeoRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const localStreamCrudoRef = useRef(null); // micrófono sin procesar; hay que cerrarlo igual al salir
+  const peersRef = useRef({}); // { socketId: RTCPeerConnection }
+  const audiosRef = useRef({}); // { socketId: <audio> element }
+  const audioCtxRef = useRef(null); // AudioContext compartido para los analizadores
+  const analizadoresRef = useRef({}); // { socketId: AnalyserNode }
+  const animacionVolumenRef = useRef(null); // id de requestAnimationFrame
+  const gateGainRef = useRef(null); // GainNode del noise-gate del audio local
 
-  useEffect(() => {
-    const socket = io(SOCKET_URL, {
+  // Datos de la sala actual, guardados en refs (no en state) para poder
+  // volver a unirnos exactamente igual después de una reconexión, sin
+  // depender de closures viejos de React.
+  const salaActualRef = useRef(null);
+  const nombreActualRef = useRef("");
+  // true SOLO cuando la persona tocó "Salir" a propósito. Sirve para
+  // distinguir un corte de red/pantalla bloqueada (hay que reconectar
+  // solos) de una salida real (ahí sí hay que apagar todo y no reintentar).
+  const saliendoManualRef = useRef(false);
+  // true después de la primerísima vez que el socket conecta; a partir de
+  // ahí, cualquier evento "connect" siguiente es una RECONEXIÓN y hay que
+  // volver a unirnos a la sala y renegociar el audio con los demás.
+  const yaConectadoUnaVezRef = useRef(false);
+
+  // Screen Wake Lock: evita que el celular apague/bloquee la pantalla
+  // mientras estamos en una sala, para que el walkie-talkie siga
+  // funcionando (los navegadores móviles cortan el mic/WebRTC cuando el
+  // teléfono se bloquea; esta es la única forma confiable de evitarlo
+  // desde una página web sin ser una app nativa).
+  const wakeLockRef = useRef(null);
+  // <audio> silencioso en loop: mantiene la sesión de audio "activa" a
+  // ojos del sistema operativo (especialmente iOS Safari), lo cual ayuda
+  // a que el navegador no congele tanto la pestaña si, aun con el Wake
+  // Lock, la pantalla llega a apagarse.
+  const audioMantenerVivoRef = useRef(null);
+
+  // ---------- Detección de "quién está hablando" por volumen real ----------
+  // Usa la Web Audio API: por cada stream (el propio o el de un peer
+  // remoto) se crea un AnalyserNode que mide el volumen ~12 veces por
+  // segundo. Si supera un umbral chico, se considera que esa persona
+  // está sonando en ese instante.
+  const obtenerAudioContext = () => {
+    if (!audioCtxRef.current) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      // latencyHint "interactive" le pide al navegador el buffer interno
+      // más chico posible (prioriza respuesta inmediata sobre estabilidad),
+      // justo lo que necesitamos para que el filtro de ruido no agregue
+      // demora perceptible al audio que sale por WebRTC.
+      audioCtxRef.current = new AC({ latencyHint: "interactive" });
+    }
+    return audioCtxRef.current;
+  };
+
+  const registrarAnalizador = (socketId, mediaStream) => {
+    try {
+      const ctx = obtenerAudioContext();
+      const fuente = ctx.createMediaStreamSource(mediaStream);
+      const analizador = ctx.createAnalyser();
+      analizador.fftSize = 512;
+      analizador.smoothingTimeConstant = 0.7;
+      fuente.connect(analizador);
+      analizadoresRef.current[socketId] = {
+        analizador,
+        datos: new Uint8Array(analizador.frequencyBinCount),
+      };
+    } catch (e) {
+      console.error("No se pudo crear analizador de audio:", e);
+    }
+  };
+
+  const quitarAnalizador = (socketId) => {
+    delete analizadoresRef.current[socketId];
+  };
+
+  // Loop continuo (requestAnimationFrame) que revisa el volumen de cada
+  // analizador registrado y actualiza qué socketIds están sonando ahora.
+  const iniciarLoopDeVolumen = () => {
+    const UMBRAL = 14; // 0-255; ajustar si detecta de más o de menos
+    const UMBRAL_GATE = 10; // un poco más sensible que UMBRAL_GATE del indicador visual
+
+    const paso = () => {
+      const nuevosHablando = new Set();
+
+      Object.entries(analizadoresRef.current).forEach(([socketId, entry]) => {
+        const { analizador, datos } = entry;
+        analizador.getByteFrequencyData(datos);
+        let suma = 0;
+        for (let i = 0; i < datos.length; i++) suma += datos[i];
+        const promedio = suma / datos.length;
+        if (promedio > UMBRAL) nuevosHablando.add(socketId);
+
+        // Noise gate del audio local: solo abrimos cuando hay voz real
+        // por encima del umbral. La transición es suave (setTargetAtTime)
+        // para no producir clics ni cortes abruptos.
+        if (socketId === "yo" && gateGainRef.current) {
+          const ctx = audioCtxRef.current;
+          const objetivo = promedio > UMBRAL_GATE ? 1 : 0.06;
+          if (ctx) {
+            gateGainRef.current.gain.setTargetAtTime(
+              objetivo,
+              ctx.currentTime,
+              0.05,
+            );
+          }
+        }
+      });
+
+      setHablandoIds((anterior) => {
+        // Evita re-render si el contenido es idéntico al anterior.
+        if (
+          anterior.size === nuevosHablando.size &&
+          [...anterior].every((id) => nuevosHablando.has(id))
+        ) {
+          return anterior;
+        }
+        return nuevosHablando;
+      });
+
+      animacionVolumenRef.current = requestAnimationFrame(paso);
+    };
+
+    animacionVolumenRef.current = requestAnimationFrame(paso);
+  };
+
+  const detenerLoopDeVolumen = () => {
+    if (animacionVolumenRef.current) {
+      cancelAnimationFrame(animacionVolumenRef.current);
+      animacionVolumenRef.current = null;
+    }
+  };
+
+  // ---------- Mantener la sala viva con la pantalla bloqueada ----------
+  const pedirWakeLock = async () => {
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch (e) {
+      // Puede fallar si la pestaña no está visible en ese instante o el
+      // navegador no lo soporta; no es un error fatal, seguimos igual.
+      console.warn("No se pudo activar Wake Lock:", e);
+    }
+  };
+
+  const soltarWakeLock = async () => {
+    try {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+      }
+    } catch (e) {
+      /* ya se soltó solo o no existía */
+    } finally {
+      wakeLockRef.current = null;
+    }
+  };
+
+  // WAV silencioso de 1 muestra en base64: reproducirlo en loop hace que
+  // el sistema operativo (sobre todo iOS) trate la pestaña como si
+  // estuviera reproduciendo audio activamente, lo que reduce bastante las
+  // probabilidades de que congele/mate la conexión de WebRTC al bloquear
+  // la pantalla.
+  const SILENCIO_WAV =
+    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+
+  const iniciarAudioMantenerVivo = () => {
+    try {
+      if (!audioMantenerVivoRef.current) {
+        const el = new Audio(SILENCIO_WAV);
+        el.loop = true;
+        el.volume = 0; // por las dudas, además de ser silencio real
+        el.playsInline = true;
+        audioMantenerVivoRef.current = el;
+      }
+      audioMantenerVivoRef.current.play().catch(() => {
+        /* algunos navegadores bloquean el autoplay; se reintenta en
+           visibilitychange cuando vuelva a haber gesto/foco */
+      });
+    } catch (e) {
+      console.warn("No se pudo iniciar audio de mantenimiento:", e);
+    }
+  };
+
+  const detenerAudioMantenerVivo = () => {
+    if (audioMantenerVivoRef.current) {
+      audioMantenerVivoRef.current.pause();
+      audioMantenerVivoRef.current.src = "";
+      audioMantenerVivoRef.current = null;
+    }
+  };
+
+  const cerrarPeer = (socketId) => {
+    const pc = peersRef.current[socketId];
+    if (pc) {
+      pc.close();
+      delete peersRef.current[socketId];
+    }
+    const audioEl = audiosRef.current[socketId];
+    if (audioEl) {
+      audioEl.srcObject = null;
+      audioEl.remove();
+      delete audiosRef.current[socketId];
+    }
+    quitarAnalizador(socketId);
+  };
+
+  const cerrarTodosLosPeers = () => {
+    Object.keys(peersRef.current).forEach(cerrarPeer);
+  };
+
+  // ---------- Limpieza de audio local: reduce ruido ambiental ----------
+  // Encadena, sobre el micrófono crudo, un filtro paso-alto (corta ruido
+  // grave de fondo: aires acondicionados, viento, murmullo ambiente) y un
+  // compresor dinámico (nivela la voz para que se entienda clara aunque
+  // la persona esté lejos del micrófono o el lugar sea ruidoso). El
+  // resultado es el stream que realmente se manda por WebRTC, además del
+  // que ya filtra el propio navegador (echoCancellation/noiseSuppression).
+  const procesarAudioLocal = (streamCrudo) => {
+    try {
+      const ctx = obtenerAudioContext();
+      const fuente = ctx.createMediaStreamSource(streamCrudo);
+
+      const filtroPasoAlto = ctx.createBiquadFilter();
+      filtroPasoAlto.type = "highpass";
+      filtroPasoAlto.frequency.value = 120; // corta ruido grave de ambiente (aires, viento, murmullo)
+
+      // Filtro paso-bajo: corta el siseo/hiss agudo (ventiladores, aire,
+      // ruido eléctrico) que queda por fuera del rango normal de la voz.
+      const filtroPasoBajo = ctx.createBiquadFilter();
+      filtroPasoBajo.type = "lowpass";
+      filtroPasoBajo.frequency.value = 8000;
+
+      const compresor = ctx.createDynamicsCompressor();
+      compresor.threshold.value = -40;
+      compresor.knee.value = 25;
+      compresor.ratio.value = 8;
+      compresor.attack.value = 0.003;
+      compresor.release.value = 0.25;
+
+      // Noise gate: un GainNode cuyo volumen se controla desde el loop de
+      // volumen (más abajo). Mientras no se detecte voz real por encima
+      // del umbral, el gain baja casi a cero, así se corta el ruido de
+      // fondo residual entre palabras/silencios en vez de mandarlo tal
+      // cual por WebRTC.
+      const gate = ctx.createGain();
+      gate.gain.value = 1;
+      gateGainRef.current = gate;
+
+      const destino = ctx.createMediaStreamDestination();
+
+      fuente.connect(filtroPasoAlto);
+      filtroPasoAlto.connect(filtroPasoBajo);
+      filtroPasoBajo.connect(compresor);
+      compresor.connect(gate);
+      gate.connect(destino);
+
+      return destino.stream;
+    } catch (e) {
+      console.error("No se pudo procesar el audio local, se usa el crudo:", e);
+      return streamCrudo;
+    }
+  };
+
+  const obtenerOCrearPeer = (otroSocketId) => {
+    if (peersRef.current[otroSocketId]) return peersRef.current[otroSocketId];
+
+    const pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      // Precalentar candidatos ICE antes de necesitarlos: acelera el
+      // tiempo de conexión inicial, sin afectar la latencia del audio
+      // una vez conectados.
+      iceCandidatePoolSize: 4,
+    });
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        const sender = pc.addTrack(track, localStreamRef.current);
+        // Le pedimos al navegador que priorice este audio en la red
+        // (menos margen para que otro tráfico lo retrase). No todos los
+        // navegadores soportan setParameters con esta opción; si falla,
+        // simplemente se ignora y sigue funcionando igual.
+        try {
+          const params = sender.getParameters();
+          if (params.encodings && params.encodings.length > 0) {
+            params.encodings[0].networkPriority = "high";
+            params.encodings[0].priority = "high";
+            sender.setParameters(params).catch(() => {});
+          }
+        } catch (e) {
+          /* no soportado en este navegador, se ignora */
+        }
+      });
+    }
+
+    pc.onicecandidate = (evento) => {
+      if (evento.candidate && socketRef.current) {
+        socketRef.current.emit("audio:senal", {
+          paraSocketId: otroSocketId,
+          tipo: "ice",
+          payload: evento.candidate,
+        });
+      }
+    };
+
+    pc.ontrack = (evento) => {
+      let audioEl = audiosRef.current[otroSocketId];
+      if (!audioEl) {
+        audioEl = document.createElement("audio");
+        audioEl.autoplay = true;
+        audioEl.playsInline = true;
+        // Reduce el buffer interno de reproducción del navegador: por
+        // defecto algunos navegadores bufferean un poco el audio entrante
+        // para evitar cortes, lo cual se siente como latencia agregada.
+        // Estas propiedades no son estándar en todos los navegadores,
+        // pero donde existen ayudan notablemente (Chrome/Edge en especial).
+        try {
+          audioEl.preservesPitch = false;
+        } catch (e) {
+          /* no soportado, se ignora */
+        }
+        document.body.appendChild(audioEl);
+        audiosRef.current[otroSocketId] = audioEl;
+      }
+      audioEl.srcObject = evento.streams[0];
+      registrarAnalizador(otroSocketId, evento.streams[0]);
+    };
+
+    // Si el enlace P2P se corta (cambio de red, wifi<->datos, NAT que
+    // expira) pero el socket sigue vivo, intentamos reparar solo ese
+    // enlace con un ICE restart, sin tener que salir/reentrar a la sala.
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed") {
+        try {
+          if (typeof pc.restartIce === "function") pc.restartIce();
+        } catch (e) {
+          /* algunos navegadores viejos no lo soportan */
+        }
+        iniciarOfertaHacia(otroSocketId);
+      }
+    };
+
+    peersRef.current[otroSocketId] = pc;
+    return pc;
+  };
+
+  // Ajusta la SDP para pedirle a Opus el modo de mínima latencia posible:
+  // desactiva DTX (que puede introducir micro-cortes/retraso al detectar
+  // silencios) y fija un tamaño de paquete chico (ptime), que es lo que
+  // más influye en la sensación de "delay" al hablar por walkie-talkie.
+  const forzarBajaLatenciaEnSDP = (sdp) => {
+    return sdp.replace(
+      /(a=rtpmap:(\d+) opus\/48000\/2\r?\n)/gi,
+      (match, linea, pt) => {
+        return `${linea}a=fmtp:${pt} minptime=10;ptime=10;maxptime=20;useinbandfec=1;usedtx=0\r\n`;
+      },
+    );
+  };
+
+  const iniciarOfertaHacia = async (otroSocketId) => {
+    const pc = obtenerOCrearPeer(otroSocketId);
+    try {
+      const oferta = await pc.createOffer();
+      oferta.sdp = forzarBajaLatenciaEnSDP(oferta.sdp);
+      await pc.setLocalDescription(oferta);
+      socketRef.current.emit("audio:senal", {
+        paraSocketId: otroSocketId,
+        tipo: "oferta",
+        payload: oferta,
+      });
+    } catch (e) {
+      console.error("Error creando oferta WebRTC:", e);
+    }
+  };
+
+  const entrarASala = async (numeroSala) => {
+    setError("");
+    setConectando(true);
+    try {
+      const streamCrudo = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          // Constraints no estándar que Chrome respeta para reforzar la
+          // limpieza de ruido en redes/lugares ruidosos. Si el navegador
+          // no las reconoce, simplemente las ignora sin romper nada.
+          channelCount: 1,
+          sampleRate: 48000,
+        },
+      });
+
+      // Filtro propio (paso-alto + compresor) ENCIMA del que ya hace el
+      // navegador, para reforzar la limpieza de voz en lugares ruidosos.
+      const stream = procesarAudioLocal(streamCrudo);
+      // Conservamos también el stream crudo para poder cerrar sus pistas
+      // (el micrófono real) cuando se sale de la sala.
+      localStreamCrudoRef.current = streamCrudo;
+
+      // Arranca muteado: el push-to-talk activa la pista solo al presionar.
+      stream.getAudioTracks().forEach((t) => (t.enabled = false));
+      localStreamRef.current = stream;
+      setMicPermitido(true);
+
+      // Analizador para mi propio audio: así mi fila también muestra el
+      // borde "hablando" cuando realmente sale sonido de mi micrófono
+      // (no solo por tener el botón presionado).
+      registrarAnalizador("yo", stream);
+      iniciarLoopDeVolumen();
+    } catch (e) {
+      console.error("No se pudo acceder al micrófono:", e);
+      setMicPermitido(false);
+      setConectando(false);
+      setError(
+        "No se pudo acceder al micrófono. Revisá los permisos del navegador e intentá de nuevo.",
+      );
+      return;
+    }
+
+    // Recordamos con qué datos entramos, para poder volver a unirnos
+    // exactamente igual si el socket se cae y se reconecta solo.
+    salaActualRef.current = numeroSala;
+    nombreActualRef.current = nombre.trim() || "Sin nombre";
+    saliendoManualRef.current = false;
+    yaConectadoUnaVezRef.current = false;
+
+    const socket = io(SERVER_URL, {
       auth: { token: obtenerToken() },
+      // Reintenta reconectar solo, indefinidamente, con backoff. Esto es
+      // clave: un corte de red (wifi que cambia, datos móviles, teléfono
+      // bloqueado un rato) no debe sacar a la persona de la sala, solo
+      // debe reconectar en cuanto sea posible.
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
     });
     socketRef.current = socket;
 
-    // Si el servidor rechaza la conexión (token inválido o vencido),
-    // se limpia la sesión y se vuelve a pedir usuario y contraseña.
     socket.on("connect_error", (err) => {
       if (err && err.message === "No autorizado") {
         borrarToken();
         window.location.reload();
+      } else {
+        setError("No se pudo conectar al servidor de audio.");
+        setConectando(false);
       }
     });
 
-    // Escuchar directrices o avisos cruzados destinados al Líder o a Todos
-    socket.on("recibir_mensaje_pastor", (datos) => {
-      if (!datos || datos.de === "Lider") return;
+    // El socket se cayó (ping timeout, celular bloqueado, wifi caída,
+    // Render "durmiendo" el server, etc). Si NO fue porque la persona
+    // tocó "Salir", nos quedamos DENTRO de la sala (no reseteamos la UI)
+    // mostrando "reconectando" mientras socket.io reintenta solo.
+    socket.on("disconnect", (razon) => {
+      if (saliendoManualRef.current) return;
+      setReconectando(true);
+      setMiembros([]);
+      cerrarTodosLosPeers();
+    });
 
-      const esParaMi =
-        datos.destinatarios.includes("Lider") ||
-        datos.destinatarios.includes("Todos");
-      if (esParaMi) {
-        setMensajesRecibidos((prev) => [datos, ...prev]);
-        setPermitirParpadeo(true);
+    // Se logró reconectar (o es la primera conexión). En reconexiones hay
+    // que anunciarse de nuevo a la sala: el socket tiene un id nuevo, así
+    // que el servidor no sabe que ya éramos parte de esa sala.
+    socket.on("connect", () => {
+      if (yaConectadoUnaVezRef.current && salaActualRef.current) {
+        socket.emit("audio:unirse", {
+          sala: salaActualRef.current,
+          nombre: nombreActualRef.current,
+          rol: rolEtiqueta,
+        });
+      }
+      yaConectadoUnaVezRef.current = true;
+    });
 
-        if (temporizadorParpadeoRef.current)
-          clearTimeout(temporizadorParpadeoRef.current);
-        temporizadorParpadeoRef.current = setTimeout(
-          () => setPermitirParpadeo(false),
-          8000,
-        );
+    socket.on("audio:estado_sala", (datos) => {
+      setMiSocketId(datos.socketId);
+      setLiveSocketId(datos.liveSocketId || null);
+      datos.participantes.forEach((p) => iniciarOfertaHacia(p.socketId));
+      setConectando(false);
+      setReconectando(false);
+      setSala(numeroSala);
+      setConectado(true);
+      pedirWakeLock();
+      iniciarAudioMantenerVivo();
+    });
 
-        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    socket.on("audio:lista_sala", (datos) => {
+      setMiembros(datos.miembros);
+    });
+
+    socket.on("audio:participante_salio", (datos) => {
+      cerrarPeer(datos.socketId);
+    });
+
+    socket.on("audio:live_actualizado", (datos) => {
+      setLiveSocketId(datos.liveSocketId || null);
+    });
+
+    socket.on("audio:senal", async (datos) => {
+      const { deSocketId, tipo, payload } = datos;
+      const pc = obtenerOCrearPeer(deSocketId);
+
+      try {
+        if (tipo === "oferta") {
+          await pc.setRemoteDescription(new RTCSessionDescription(payload));
+          const respuesta = await pc.createAnswer();
+          respuesta.sdp = forzarBajaLatenciaEnSDP(respuesta.sdp);
+          await pc.setLocalDescription(respuesta);
+          socket.emit("audio:senal", {
+            paraSocketId: deSocketId,
+            tipo: "respuesta",
+            payload: respuesta,
+          });
+        } else if (tipo === "respuesta") {
+          await pc.setRemoteDescription(new RTCSessionDescription(payload));
+        } else if (tipo === "ice") {
+          await pc.addIceCandidate(new RTCIceCandidate(payload));
+        }
+      } catch (e) {
+        console.error("Error procesando señal WebRTC:", e);
       }
     });
 
-    // Escuchar el estado de Tally en tiempo real
-    socket.on("recibir_orden_camara", (datos) => {
-      if (datos && datos.camara !== undefined) {
-        setEstadosCamaras((prev) => ({
-          ...prev,
-          [datos.camara]: datos.estado || "standby",
-        }));
-      }
+    socket.emit("audio:unirse", {
+      sala: numeroSala,
+      nombre: nombre.trim() || "Sin nombre",
+      rol: rolEtiqueta,
     });
+  };
 
+  const salirDeSala = () => {
+    saliendoManualRef.current = true;
+    if (socketRef.current) {
+      socketRef.current.emit("audio:salir");
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+    cerrarTodosLosPeers();
+    detenerLoopDeVolumen();
+    quitarAnalizador("yo");
+    soltarWakeLock();
+    detenerAudioMantenerVivo();
+    gateGainRef.current = null;
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
+    if (localStreamCrudoRef.current) {
+      localStreamCrudoRef.current.getTracks().forEach((t) => t.stop());
+      localStreamCrudoRef.current = null;
+    }
+    salaActualRef.current = null;
+    setSala(null);
+    setConectado(false);
+    setReconectando(false);
+    setMiembros([]);
+    setLiveSocketId(null);
+    setHablando(false);
+    setHablandoIds(new Set());
+  };
+
+  useEffect(() => {
     return () => {
-      socket.disconnect();
-      if (temporizadorParpadeoRef.current)
-        clearTimeout(temporizadorParpadeoRef.current);
+      saliendoManualRef.current = true;
+      if (socketRef.current) {
+        socketRef.current.emit("audio:salir");
+        socketRef.current.disconnect();
+      }
+      cerrarTodosLosPeers();
+      detenerLoopDeVolumen();
+      soltarWakeLock();
+      detenerAudioMantenerVivo();
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      if (localStreamCrudoRef.current) {
+        localStreamCrudoRef.current.getTracks().forEach((t) => t.stop());
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+        audioCtxRef.current = null;
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const toggleDestinatario = (dest) => {
-    setDestinatarios((prev) =>
-      prev.includes(dest) ? prev.filter((d) => d !== dest) : [...prev, dest],
-    );
-  };
-
-  const enviarMensaje = (textoAEnviar) => {
-    if (!textoAEnviar || !textoAEnviar.trim() || !socketRef.current) return;
-
-    // Si no hay destinatario seleccionado, no se envía nada
-    if (destinatarios.length === 0) {
-      setConfirmacion("⚠️ Selecciona un destinatario primero");
-      setTimeout(() => setConfirmacion(""), 2500);
-      return;
-    }
-
-    // Separar envíos nativos a Tally de cámaras de los del chat interconectado
-    const camarasAEnviar = destinatarios
-      .filter((d) => d.startsWith("C"))
-      .map((d) => Number(d.replace("C", "")));
-
-    if (camarasAEnviar.length > 0) {
-      socketRef.current.emit("enviar_mensaje_general", {
-        camaras: camarasAEnviar,
-        mensaje: textoAEnviar.trim(),
-        de: "LÍDER",
-      });
-    }
-
-    // Enviar a Pastor, Director o canales generales de mensajería
-    const otrosDestinos = destinatarios.filter((d) => !d.startsWith("C"));
-    if (otrosDestinos.length > 0) {
-      socketRef.current.emit("enviar_mensaje_a_pastor", {
-        de: "Lider",
-        texto: textoAEnviar.trim(),
-        destinatarios: otrosDestinos,
-        id: Date.now(),
-      });
-    }
-
-    setConfirmacion("Enviado ✓");
-    setTimeout(() => setConfirmacion(""), 2000);
-  };
-
-  return (
-    <div style={styles.container}>
-      <style>{`
-        @keyframes parpadeoLider {
-          0% { background-color: rgba(230, 126, 34, 0.2); }
-          50% { background-color: rgba(230, 126, 34, 0.5); border-color: #fff; }
-          100% { background-color: rgba(230, 126, 34, 0.2); }
+  // Re-solicita el Wake Lock cuando la pestaña vuelve a estar visible: el
+  // navegador lo suelta automáticamente al pasar a segundo plano, así que
+  // hay que pedirlo de nuevo apenas la persona vuelve a mirar la pantalla
+  // (por ejemplo, al desbloquear el celular). También reintenta el audio
+  // de mantenimiento por si el sistema lo pausó.
+  useEffect(() => {
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === "visible" && conectado) {
+        pedirWakeLock();
+        if (audioMantenerVivoRef.current) {
+          audioMantenerVivoRef.current.play().catch(() => {});
         }
-        .alerta-lider { animation: parpadeoLider 0.8s infinite ease-in-out; }
-      `}</style>
+        if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+          audioCtxRef.current.resume().catch(() => {});
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", alCambiarVisibilidad);
+    return () =>
+      document.removeEventListener("visibilitychange", alCambiarVisibilidad);
+  }, [conectado]);
 
-      <header style={styles.navbar}>
-        <button style={styles.btnVolver} onClick={alSalir}>
-          ⬅️ Menú
-        </button>
-        <h1 style={styles.navTitle}>🔸 PANEL DE LÍDER</h1>
-        <button style={styles.btnVolver} onClick={() => setMostrarAudio(true)}>
-          🎙️ Audio
-        </button>
-      </header>
-      <div style={styles.confirmacion}>{confirmacion}</div>
+  const empezarAHablar = () => {
+    if (!micPermitido || !localStreamRef.current) return;
+    localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = true));
+    setHablando(true);
+  };
 
-      {mostrarAudio && (
-        <SalaAudio
-          alSalir={() => setMostrarAudio(false)}
-          esDirector={false}
-          rolEtiqueta="Líder"
-          compacta={true}
-        />
-      )}
+  const dejarDeHablar = () => {
+    if (!localStreamRef.current) return;
+    localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = false));
+    setHablando(false);
+  };
 
-      <BarraTransmision posicion="abajo" variante="compacta" />
+  // El Director tiene las manos ocupadas seguido (cámara, switcher, etc.),
+  // así que en vez de mantener presionado, un solo toque prende el mic y
+  // queda prendido hasta el siguiente toque (toggle). El resto de roles
+  // sigue con push-to-talk: mantener presionado mientras se habla.
+  const alternarHablarDirector = () => {
+    if (hablando) {
+      dejarDeHablar();
+    } else {
+      empezarAHablar();
+    }
+  };
 
-      <div style={styles.layoutPrincipal}>
-        {/* RETORNO DE RETÍCULA DE CÁMARAS */}
-        <div style={styles.seccionCard}>
-          <h3 style={styles.tituloSeccion}>
-            🎥 ESTADO DE CÁMARAS EN TIEMPO REAL
-          </h3>
-          <div style={styles.gridMonitorCamaras}>
-            {[1, 2, 3, 4, 5, 6].map((num) => {
-              const estado = estadosCamaras[num] || "standby";
-              let fondoCam = "#2a2a2a";
-              let txt = "ESPERA";
-              if (estado === "live") {
-                fondoCam = "#ff3333";
-                txt = "VIVO";
-              } else if (estado === "preview") {
-                fondoCam = "#00cc66";
-                txt = "PREVIO";
-              }
-              return (
-                <div
-                  key={num}
-                  style={{ ...styles.cardMonitor, backgroundColor: fondoCam }}
-                >
-                  <span style={styles.cardMonitorNum}>C{num}</span>
-                  <span style={styles.cardMonitorEstado}>{txt}</span>
-                </div>
-              );
-            })}
+  // Handlers del botón de hablar: cambian según el rol, para no repetir
+  // la rama esDirector en cada uno de los dos botones (modo compacto y
+  // modo pantalla completa).
+  const propsBotonHablar = esDirector
+    ? { onClick: alternarHablarDirector }
+    : {
+        onMouseDown: empezarAHablar,
+        onMouseUp: dejarDeHablar,
+        onMouseLeave: dejarDeHablar,
+        onTouchStart: (e) => {
+          e.preventDefault();
+          empezarAHablar();
+        },
+        onTouchEnd: (e) => {
+          e.preventDefault();
+          dejarDeHablar();
+        },
+      };
+
+  const textoBotonHablar = hablando
+    ? esDirector
+      ? "🔴 MIC ABIERTO · TOCÁ PARA SILENCIAR"
+      : "HABLANDO..."
+    : esDirector
+      ? "TOCÁ PARA ACTIVAR EL MIC"
+      : "MANTENÉ PRESIONADO PARA HABLAR";
+
+  const marcarEnVivo = (socketId) => {
+    if (!socketRef.current || !sala) return;
+    const nuevoLive = liveSocketId === socketId ? null : socketId;
+    socketRef.current.emit("audio:marcar_live", { sala, socketId: nuevoLive });
+  };
+
+  // ================= MODO COMPACTO (conectado, conviviendo con el chat) =================
+  // Se usa una vez que ya estás dentro de una sala y la pantalla padre
+  // pasó compacta=true: en vez de tapar toda la pantalla, se muestra como
+  // una franja arriba, dejando visible el resto del panel (tally, chat,
+  // botones rápidos) debajo.
+  if (compacta && conectado) {
+    return (
+      <div style={styles.compactaContenedor}>
+        {liveSocketId === miSocketId && (
+          <div style={styles.compactaAvisoEnVivo}>
+            <span style={styles.avisoEnVivoIcono}>🔴</span>
+            <span style={styles.avisoEnVivoTexto}>ESTÁS EN VIVO</span>
+          </div>
+        )}
+
+        <div style={styles.compactaHeader}>
+          <div style={styles.compactaHeaderInfo}>
+            <span style={styles.compactaPuntoSala} />
+            <span style={styles.compactaTituloSala}>🎙️ Sala {sala}</span>
+            <span style={styles.compactaContador}>
+              {miembros.length}{" "}
+              {miembros.length === 1 ? "conectado" : "conectados"}
+            </span>
+          </div>
+          <div style={styles.compactaAcciones}>
+            <button
+              style={styles.compactaBtnIcono}
+              onClick={() => setMinimizada((v) => !v)}
+              title={minimizada ? "Expandir" : "Minimizar"}
+            >
+              {minimizada ? "▾" : "▴"}
+            </button>
+            <button
+              style={styles.compactaBtnIcono}
+              onClick={salirDeSala}
+              title="Salir de la sala"
+            >
+              ✕
+            </button>
           </div>
         </div>
 
-        {/* RECEPTOR DE MENSAJES (BUZÓN) */}
-        <div
-          style={{ ...styles.seccionCard, flex: 1.2 }}
-          className={
-            permitirParpadeo && mensajesRecibidos.length > 0
-              ? "alerta-lider"
-              : ""
-          }
-        >
-          <h3 style={styles.tituloSeccion}>
-            📥 BUZÓN DE INSTRUCCIONES ENTRANTES
-          </h3>
-          <div style={styles.buzonMensajes}>
-            {mensajesRecibidos.length === 0 ? (
-              <p style={styles.textoVacio}>No hay mensajes entrantes.</p>
-            ) : (
-              mensajesRecibidos.map((msg) => (
-                <div key={msg.id} style={styles.msgItem}>
-                  <div>
-                    <strong style={{ color: "#e67e22" }}>{msg.de}: </strong>
-                    <span style={{ color: "#fff" }}>{msg.texto}</span>
-                  </div>
-                  <button
-                    style={styles.btnBorrar}
-                    onClick={() =>
-                      setMensajesRecibidos((prev) =>
-                        prev.filter((m) => m.id !== msg.id),
-                      )
-                    }
+        {reconectando && (
+          <p style={styles.textoReconectando}>
+            <span style={styles.spinner} /> Conexión inestable, reconectando…
+          </p>
+        )}
+
+        {!minimizada && (
+          <>
+            {error && <p style={styles.textoError}>⚠ {error}</p>}
+
+            <div style={styles.compactaListaMiembros}>
+              {miembros.map((m) => {
+                const enVivo = liveSocketId === m.socketId;
+                const soyYo = m.socketId === miSocketId;
+                const estaHablando = soyYo
+                  ? hablandoIds.has("yo")
+                  : hablandoIds.has(m.socketId);
+                return (
+                  <div
+                    key={m.socketId}
+                    style={{
+                      ...styles.compactaChipMiembro,
+                      ...(enVivo ? styles.compactaChipEnVivo : {}),
+                      ...(estaHablando ? styles.compactaChipHablando : {}),
+                      cursor: esDirector ? "pointer" : "default",
+                    }}
+                    onClick={() => esDirector && marcarEnVivo(m.socketId)}
                   >
-                    ✕
-                  </button>
-                </div>
-              ))
+                    <span style={styles.puntoEstado(enVivo)} />
+                    <span style={styles.compactaChipTexto}>
+                      <strong>{m.rol}</strong>
+                      <span style={styles.separador}>·</span>
+                      {m.nombre}
+                      {soyYo && <span style={styles.tagYo}>tú</span>}
+                    </span>
+                    {estaHablando && (
+                      <span style={styles.badgeHablando}>🔊</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {esDirector && miembros.length > 0 && (
+              <p style={styles.compactaHintDirector}>
+                Tocá un nombre para marcarlo en vivo
+              </p>
             )}
+
+            {!micPermitido ? (
+              <p style={styles.textoError}>⚠ Sin acceso al micrófono.</p>
+            ) : (
+              <button
+                style={{
+                  ...styles.compactaBtnHablar,
+                  ...(hablando ? styles.btnHablarActivo : {}),
+                }}
+                {...propsBotonHablar}
+              >
+                <span style={styles.btnHablarIcono}>
+                  {hablando ? "🔴" : "🎤"}
+                </span>
+                {textoBotonHablar}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (!conectado) {
+    return (
+      <div style={styles.contenedor}>
+        <div style={styles.fondoDecorativo} />
+
+        <div style={styles.headerArea}>
+          <div style={styles.headerTextos}>
+            <span style={styles.iconoGrande}>🎙️</span>
+            <div>
+              <h2 style={styles.titulo}>Sala de audio</h2>
+              <p style={styles.subtitulo}>
+                Comunicación en vivo, baja latencia
+              </p>
+            </div>
           </div>
+          <button style={styles.btnSalirChico} onClick={alSalir}>
+            ✕
+          </button>
         </div>
 
-        {/* SELECTOR DE DESTINATARIOS Y ENVÍO */}
-        <div style={styles.seccionCard}>
-          <h3 style={styles.tituloSeccion}>🎯 DESTINATARIOS SELECCIONADOS</h3>
-          <div style={styles.gridDestinatarios}>
-            {DESTINATARIOS_LIDER.map((dest) => (
+        <div style={styles.tarjetaSetup}>
+          <label style={styles.etiquetaCampo}>Tu nombre</label>
+          <input
+            type="text"
+            placeholder=""
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            style={styles.inputNombre}
+            maxLength={24}
+            disabled={conectando}
+            autoFocus
+          />
+
+          <label style={styles.etiquetaCampo}>Elegí una sala</label>
+          <div style={styles.gridSalas}>
+            {SALAS.map((s) => (
               <button
-                key={dest}
-                onClick={() => toggleDestinatario(dest)}
+                key={s}
                 style={{
-                  ...styles.btnDest,
-                  backgroundColor: destinatarios.includes(dest)
-                    ? "#e67e22"
-                    : "#222",
-                  borderColor: destinatarios.includes(dest) ? "#fff" : "#444",
+                  ...styles.btnSala,
+                  opacity: !nombre.trim() || conectando ? 0.4 : 1,
+                  cursor:
+                    !nombre.trim() || conectando ? "not-allowed" : "pointer",
                 }}
+                disabled={!nombre.trim() || conectando}
+                onClick={() => entrarASala(s)}
               >
-                {dest}
+                <span style={styles.btnSalaNumero}>{s}</span>
+                <span style={styles.btnSalaTexto}>SALA</span>
               </button>
             ))}
           </div>
 
-          <div style={{ marginTop: "15px" }}>
-            <h4 style={styles.subTitulo}>Frases Rápidas:</h4>
-            <div style={styles.gridFrases}>
-              {FRASES_RAPIDAS_LIDER.map((f) => (
-                <button
-                  key={f}
-                  onClick={() => enviarMensaje(f)}
-                  disabled={destinatarios.length === 0}
-                  style={{
-                    ...styles.btnFrase,
-                    opacity: destinatarios.length === 0 ? 0.4 : 1,
-                    cursor:
-                      destinatarios.length === 0 ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              enviarMensaje(textoMensaje);
-              setTextoMensaje("");
-            }}
-            style={styles.formEnvio}
-          >
-            <input
-              type="text"
-              placeholder={
-                destinatarios.length === 0
-                  ? "⚠️ Selecciona un destinatario primero"
-                  : "Escribe un mensaje personalizado..."
-              }
-              value={textoMensaje}
-              onChange={(e) => setTextoMensaje(e.target.value)}
-              disabled={destinatarios.length === 0}
-              style={styles.inputMsg}
-            />
-            <button
-              type="submit"
-              disabled={destinatarios.length === 0 || !textoMensaje.trim()}
-              style={{
-                ...styles.btnEnviar,
-                opacity:
-                  destinatarios.length === 0 || !textoMensaje.trim() ? 0.4 : 1,
-                cursor:
-                  destinatarios.length === 0 || !textoMensaje.trim()
-                    ? "not-allowed"
-                    : "pointer",
-              }}
-            >
-              ENVIAR
-            </button>
-          </form>
+          {conectando && (
+            <p style={styles.hintConectando}>
+              <span style={styles.spinner} /> Conectando al micrófono y a la
+              sala...
+            </p>
+          )}
+          {!conectando && !nombre.trim() && (
+            <p style={styles.hintNombre}>
+              Escribí tu nombre para poder entrar.
+            </p>
+          )}
+          {error && <p style={styles.textoError}>⚠ {error}</p>}
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div style={styles.contenedor}>
+      <div style={styles.fondoDecorativo} />
+
+      {liveSocketId === miSocketId && (
+        <div style={styles.avisoEnVivo}>
+          <span style={styles.avisoEnVivoIcono}>🔴</span>
+          <span style={styles.avisoEnVivoTexto}>ESTÁS EN VIVO</span>
+        </div>
+      )}
+
+      <div style={styles.headerArea}>
+        <div style={styles.headerTextos}>
+          <span style={styles.iconoGrande}>🎙️</span>
+          <div>
+            <h2 style={styles.titulo}>Sala {sala}</h2>
+            <p style={styles.subtitulo}>
+              {miembros.length}{" "}
+              {miembros.length === 1
+                ? "persona conectada"
+                : "personas conectadas"}
+            </p>
+          </div>
+        </div>
+        <button style={styles.btnSalirChico} onClick={salirDeSala}>
+          ✕
+        </button>
+      </div>
+
+      {reconectando && (
+        <p style={styles.textoReconectando}>
+          <span style={styles.spinner} /> Conexión inestable, reconectando…
+        </p>
+      )}
+
+      {error && <p style={styles.textoError}>⚠ {error}</p>}
+
+      <div style={styles.listaMiembros}>
+        {miembros.length === 0 && (
+          <div style={styles.vacioListaCaja}>
+            <span style={styles.vacioListaIcono}>👋</span>
+            <p style={styles.vacioLista}>Esperando a que otros se unan...</p>
+          </div>
+        )}
+        {miembros.map((m) => {
+          const enVivo = liveSocketId === m.socketId;
+          const soyYo = m.socketId === miSocketId;
+          // "yo" se registra con la clave especial "yo" en el analizador
+          // local; los demás se identifican por su socketId real.
+          const estaHablando = soyYo
+            ? hablandoIds.has("yo")
+            : hablandoIds.has(m.socketId);
+          return (
+            <div
+              key={m.socketId}
+              style={{
+                ...styles.filaMiembro,
+                ...(enVivo ? styles.filaMiembroEnVivo : {}),
+                ...(estaHablando ? styles.filaMiembroHablando : {}),
+                cursor: esDirector ? "pointer" : "default",
+              }}
+              onClick={() => esDirector && marcarEnVivo(m.socketId)}
+            >
+              <span style={styles.puntoEstado(enVivo)} />
+              <span style={styles.etiquetaMiembro}>
+                <strong style={styles.rolMiembro}>{m.rol}</strong>
+                <span style={styles.separador}>·</span>
+                <span style={styles.nombreMiembro}>{m.nombre}</span>
+                {soyYo && <span style={styles.tagYo}>tú</span>}
+              </span>
+              {estaHablando && <span style={styles.badgeHablando}>🔊</span>}
+              {enVivo && <span style={styles.badgeLive}>● EN VIVO</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {esDirector && miembros.length > 0 && (
+        <p style={styles.hintDirector}>
+          Tocá un nombre para marcarlo en vivo · Solo uno a la vez
+        </p>
+      )}
+
+      {!micPermitido ? (
+        <p style={styles.textoError}>
+          ⚠ Sin acceso al micrófono. Revisá los permisos del navegador y volvé a
+          entrar.
+        </p>
+      ) : (
+        <button
+          style={{
+            ...styles.btnHablar,
+            ...(hablando ? styles.btnHablarActivo : {}),
+          }}
+          {...propsBotonHablar}
+        >
+          <span style={styles.btnHablarIcono}>{hablando ? "🔴" : "🎤"}</span>
+          {textoBotonHablar}
+        </button>
+      )}
     </div>
   );
 }
 
 const styles = {
-  container: {
-    backgroundColor: "#0b0c10",
-    minHeight: "100vh",
+  contenedor: {
+    backgroundColor: "#0a0a0f",
+    backgroundImage:
+      "radial-gradient(circle at 50% 0%, rgba(21, 101, 192, 0.12), transparent 60%)",
     color: "#fff",
-    fontFamily: "sans-serif",
-  },
-  navbar: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: "#1f2833",
-    padding: "10px 20px",
-  },
-  btnVolver: {
-    backgroundColor: "#c5a059",
-    border: "none",
-    padding: "8px 15px",
-    borderRadius: "5px",
-    fontWeight: "bold",
-    cursor: "pointer",
-  },
-  navTitle: { fontSize: "1.3rem", margin: 0, fontWeight: "bold" },
-  confirmacion: { color: "#2ecc71", fontWeight: "bold" },
-  layoutPrincipal: {
-    padding: "15px",
+    position: "fixed",
+    top: 0,
+    left: 0,
+    width: "100vw",
+    height: "100vh",
+    zIndex: 9999,
+    padding: "20px",
+    boxSizing: "border-box",
+    fontFamily: "'Segoe UI', system-ui, -apple-system, Arial, sans-serif",
     display: "flex",
     flexDirection: "column",
-    gap: "15px",
-  },
-  seccionCard: {
-    backgroundColor: "#151922",
-    padding: "15px",
-    borderRadius: "10px",
-    border: "1px solid #232936",
-  },
-  tituloSeccion: {
-    margin: "0 0 12px 0",
-    fontSize: "0.95rem",
-    color: "#95a5a6",
-    letterSpacing: "0.5px",
-  },
-  gridMonitorCamaras: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "10px",
-  },
-  cardMonitor: {
-    padding: "12px 5px",
-    borderRadius: "6px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "4px",
-  },
-  cardMonitorNum: { fontSize: "1.2rem", fontWeight: "900" },
-  cardMonitorEstado: { fontSize: "0.75rem", opacity: 0.9 },
-  buzonMensajes: {
-    maxHeight: "180px",
     overflowY: "auto",
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
   },
-  textoVacio: { color: "#666", fontSize: "0.9rem", textAlign: "center" },
-  msgItem: {
+  fondoDecorativo: {
+    position: "fixed",
+    top: "-120px",
+    right: "-80px",
+    width: "260px",
+    height: "260px",
+    borderRadius: "50%",
+    background:
+      "radial-gradient(circle, rgba(0, 200, 83, 0.10), transparent 70%)",
+    pointerEvents: "none",
+    zIndex: -1,
+  },
+  headerArea: {
     display: "flex",
     justifyContent: "space-between",
-    backgroundColor: "#0d1117",
-    padding: "10px",
-    borderRadius: "6px",
+    alignItems: "center",
+    marginBottom: "22px",
+    position: "relative",
+    zIndex: 1,
   },
-  btnBorrar: {
-    background: "none",
-    border: "none",
-    color: "#e74c3c",
-    fontWeight: "bold",
+  headerTextos: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+  },
+  iconoGrande: {
+    fontSize: "1.8rem",
+    filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.4))",
+  },
+  titulo: {
+    margin: 0,
+    fontSize: "1.25rem",
+    fontWeight: 800,
+    letterSpacing: "0.2px",
+  },
+  subtitulo: {
+    color: "#8a8f9a",
+    fontSize: "0.82rem",
+    margin: "2px 0 0 0",
+  },
+  btnSalirChico: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#fff",
+    width: "36px",
+    height: "36px",
+    borderRadius: "50%",
     cursor: "pointer",
+    fontWeight: "bold",
+    fontSize: "0.95rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "background-color 0.15s ease",
+    flexShrink: 0,
   },
-  gridDestinatarios: {
+  tarjetaSetup: {
+    backgroundColor: "rgba(255,255,255,0.035)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: "18px",
+    padding: "22px",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+    position: "relative",
+    zIndex: 1,
+  },
+  etiquetaCampo: {
+    display: "block",
+    color: "#9aa0ab",
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.6px",
+    marginBottom: "8px",
+  },
+  inputNombre: {
+    width: "100%",
+    padding: "14px 16px",
+    borderRadius: "12px",
+    border: "1px solid rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(0,0,0,0.3)",
+    color: "#fff",
+    fontSize: "1rem",
+    boxSizing: "border-box",
+    marginBottom: "20px",
+    outline: "none",
+  },
+  gridSalas: {
     display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "12px",
+  },
+  btnSala: {
+    padding: "18px 8px",
+    backgroundColor: "rgba(21, 101, 192, 0.18)",
+    backgroundImage:
+      "linear-gradient(135deg, rgba(33, 150, 243, 0.25), rgba(21, 101, 192, 0.12))",
+    color: "#fff",
+    border: "1px solid rgba(33, 150, 243, 0.35)",
+    borderRadius: "14px",
+    fontSize: "1rem",
+    fontWeight: "800",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "2px",
+    transition: "transform 0.1s ease",
+  },
+  btnSalaNumero: {
+    fontSize: "1.6rem",
+    lineHeight: 1,
+  },
+  btnSalaTexto: {
+    fontSize: "0.65rem",
+    letterSpacing: "1.5px",
+    color: "#bcd6f5",
+    fontWeight: 700,
+  },
+  hintConectando: {
+    color: "#9ecbff",
+    fontSize: "0.85rem",
+    textAlign: "center",
+    marginTop: "16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     gap: "8px",
   },
-  btnDest: {
+  spinner: {
+    width: "12px",
+    height: "12px",
+    border: "2px solid rgba(158,203,255,0.3)",
+    borderTopColor: "#9ecbff",
+    borderRadius: "50%",
+    display: "inline-block",
+    animation: "spin-sala-audio 0.7s linear infinite",
+  },
+  hintNombre: {
+    color: "#6b7280",
+    fontSize: "0.8rem",
+    textAlign: "center",
+    marginTop: "14px",
+  },
+  textoError: {
+    color: "#ff6b6b",
+    fontSize: "0.85rem",
+    fontWeight: "600",
+    marginTop: "12px",
+  },
+  textoReconectando: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: "#ffca28",
+    fontSize: "0.85rem",
+    fontWeight: "700",
+    backgroundColor: "rgba(255, 202, 40, 0.12)",
+    border: "1px solid rgba(255, 202, 40, 0.4)",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    marginTop: "8px",
+  },
+  listaMiembros: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    marginBottom: "18px",
+    overflowY: "auto",
+    position: "relative",
+    zIndex: 1,
+  },
+  vacioListaCaja: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "40px 20px",
+    color: "#666",
+  },
+  vacioListaIcono: { fontSize: "1.8rem", opacity: 0.6 },
+  vacioLista: { color: "#6b7280", fontSize: "0.9rem", margin: 0 },
+  filaMiembro: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "14px 16px",
+    borderRadius: "14px",
+    backgroundColor: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.07)",
+    transition: "background-color 0.15s ease, border-color 0.15s ease",
+  },
+  filaMiembroEnVivo: {
+    backgroundColor: "rgba(0, 200, 83, 0.12)",
+    border: "1px solid rgba(0, 230, 118, 0.45)",
+    boxShadow: "0 0 18px rgba(0, 200, 83, 0.15)",
+  },
+  // Borde "estilo WhatsApp": se prende solo mientras hay sonido real
+  // detectado en ese stream (no solo por tener el botón presionado).
+  // Si la persona también está marcada "en vivo", este borde gana
+  // prioridad visual (se aplica después en el spread de estilos).
+  filaMiembroHablando: {
+    border: "2px solid #00e676",
+    boxShadow:
+      "0 0 0 3px rgba(0, 230, 118, 0.22), 0 0 16px rgba(0, 230, 118, 0.35)",
+    transition: "border-color 0.08s ease, box-shadow 0.08s ease",
+  },
+  badgeHablando: {
+    fontSize: "0.85rem",
+    flexShrink: 0,
+    animation: "pulso-hablando-sala-audio 0.9s ease-in-out infinite",
+  },
+  puntoEstado: (enVivo) => ({
+    width: "10px",
+    height: "10px",
+    borderRadius: "50%",
+    backgroundColor: enVivo ? "#00e676" : "#555",
+    boxShadow: enVivo ? "0 0 10px rgba(0, 230, 118, 0.7)" : "none",
+    flexShrink: 0,
+  }),
+  etiquetaMiembro: {
+    flex: 1,
+    fontSize: "0.95rem",
+    display: "flex",
+    alignItems: "baseline",
+    gap: "6px",
+    flexWrap: "wrap",
+  },
+  rolMiembro: { color: "#e8eaed", fontWeight: 700 },
+  separador: { color: "#555" },
+  nombreMiembro: { color: "#c7cbd1" },
+  tagYo: {
+    color: "#7aa2ff",
+    fontSize: "0.7rem",
+    fontWeight: 700,
+    backgroundColor: "rgba(122, 162, 255, 0.15)",
+    padding: "2px 7px",
+    borderRadius: "999px",
+    marginLeft: "2px",
+  },
+  badgeLive: {
+    backgroundColor: "#00c853",
+    color: "#04210f",
+    fontSize: "0.68rem",
+    fontWeight: "900",
+    padding: "4px 9px",
+    borderRadius: "999px",
+    flexShrink: 0,
+    letterSpacing: "0.3px",
+  },
+  hintDirector: {
+    color: "#6b7280",
+    fontSize: "0.78rem",
+    textAlign: "center",
+    marginBottom: "14px",
+    position: "relative",
+    zIndex: 1,
+  },
+  avisoEnVivo: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+    padding: "12px",
+    marginBottom: "16px",
+    borderRadius: "14px",
+    backgroundColor: "rgba(229, 57, 53, 0.15)",
+    border: "1px solid rgba(229, 57, 53, 0.5)",
+    boxShadow: "0 0 24px rgba(229, 57, 53, 0.25)",
+    animation: "pulso-en-vivo-sala-audio 1.4s ease-in-out infinite",
+    position: "relative",
+    zIndex: 1,
+  },
+  avisoEnVivoIcono: {
+    fontSize: "1.1rem",
+    animation: "pulso-hablando-sala-audio 0.9s ease-in-out infinite",
+  },
+  avisoEnVivoTexto: {
+    fontSize: "1rem",
+    fontWeight: 900,
+    letterSpacing: "1px",
+    color: "#ff8a80",
+  },
+  btnHablar: {
+    width: "100%",
+    padding: "20px",
+    border: "1px solid rgba(33, 150, 243, 0.4)",
+    borderRadius: "16px",
+    backgroundColor: "#0d63d6",
+    backgroundImage: "linear-gradient(135deg, #1976f3, #0d4fb0)",
     color: "#fff",
-    border: "1px solid",
-    padding: "10px 2px",
-    borderRadius: "6px",
+    fontSize: "1rem",
+    fontWeight: "800",
+    cursor: "pointer",
+    userSelect: "none",
+    touchAction: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+    letterSpacing: "0.3px",
+    boxShadow: "0 8px 24px rgba(13, 99, 214, 0.35)",
+    transition: "transform 0.08s ease, box-shadow 0.15s ease",
+    position: "relative",
+    zIndex: 1,
+  },
+  btnHablarActivo: {
+    backgroundColor: "#c62828",
+    backgroundImage: "linear-gradient(135deg, #e53935, #b71c1c)",
+    boxShadow:
+      "0 0 0 6px rgba(229, 57, 53, 0.18), 0 8px 24px rgba(183, 28, 28, 0.45)",
+    transform: "scale(0.98)",
+  },
+  btnHablarIcono: {
+    fontSize: "1.2rem",
+  },
+
+  // ===== Estilos del modo compacto (franja integrada, no tapa el chat) =====
+  compactaContenedor: {
+    backgroundColor: "#13131a",
+    backgroundImage:
+      "linear-gradient(180deg, rgba(33,150,243,0.07), transparent)",
+    border: "1px solid rgba(255,255,255,0.09)",
+    borderRadius: "16px",
+    padding: "12px 14px",
+    marginBottom: "10px",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.3)",
+    fontFamily: "'Segoe UI', system-ui, -apple-system, Arial, sans-serif",
+    color: "#fff",
+    boxSizing: "border-box",
+  },
+  compactaHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  compactaHeaderInfo: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap",
+    minWidth: 0,
+  },
+  compactaPuntoSala: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    backgroundColor: "#00e676",
+    boxShadow: "0 0 8px rgba(0, 230, 118, 0.7)",
+    flexShrink: 0,
+  },
+  compactaTituloSala: {
+    fontSize: "0.92rem",
+    fontWeight: 800,
+  },
+  compactaContador: {
+    fontSize: "0.72rem",
+    color: "#8a8f9a",
+    fontWeight: 600,
+  },
+  compactaAcciones: {
+    display: "flex",
+    gap: "6px",
+    flexShrink: 0,
+  },
+  compactaBtnIcono: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#fff",
+    width: "28px",
+    height: "28px",
+    borderRadius: "8px",
     cursor: "pointer",
     fontSize: "0.85rem",
-    fontWeight: "bold",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  subTitulo: { margin: "5px 0", fontSize: "0.85rem", color: "#bbb" },
-  gridFrases: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" },
-  btnFrase: {
-    backgroundColor: "#2c3e50",
+  compactaAvisoEnVivo: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "8px",
+    marginBottom: "10px",
+    borderRadius: "10px",
+    backgroundColor: "rgba(229, 57, 53, 0.15)",
+    border: "1px solid rgba(229, 57, 53, 0.5)",
+    animation: "pulso-en-vivo-sala-audio 1.4s ease-in-out infinite",
+  },
+  compactaListaMiembros: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    marginTop: "10px",
+    marginBottom: "10px",
+  },
+  compactaChipMiembro: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "6px 10px",
+    borderRadius: "999px",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    fontSize: "0.78rem",
+    transition: "border-color 0.1s ease, box-shadow 0.1s ease",
+  },
+  compactaChipEnVivo: {
+    backgroundColor: "rgba(0, 200, 83, 0.14)",
+    border: "1px solid rgba(0, 230, 118, 0.5)",
+  },
+  compactaChipHablando: {
+    border: "2px solid #00e676",
+    boxShadow:
+      "0 0 0 2px rgba(0, 230, 118, 0.2), 0 0 10px rgba(0, 230, 118, 0.3)",
+  },
+  compactaChipTexto: {
+    color: "#e8eaed",
+    whiteSpace: "nowrap",
+  },
+  compactaHintDirector: {
+    color: "#6b7280",
+    fontSize: "0.72rem",
+    textAlign: "center",
+    marginBottom: "8px",
+  },
+  compactaBtnHablar: {
+    width: "100%",
+    padding: "13px",
+    border: "1px solid rgba(33, 150, 243, 0.4)",
+    borderRadius: "12px",
+    backgroundColor: "#0d63d6",
+    backgroundImage: "linear-gradient(135deg, #1976f3, #0d4fb0)",
     color: "#fff",
-    border: "none",
-    padding: "10px",
-    borderRadius: "5px",
+    fontSize: "0.85rem",
+    fontWeight: "800",
     cursor: "pointer",
-    fontSize: "0.8rem",
-  },
-  formEnvio: { display: "flex", gap: "10px", marginTop: "15px" },
-  inputMsg: {
-    flex: 1,
-    backgroundColor: "#0d1117",
-    border: "1px solid #333",
-    color: "#fff",
-    padding: "10px",
-    borderRadius: "5px",
-  },
-  btnEnviar: {
-    backgroundColor: "#e67e22",
-    border: "none",
-    color: "#fff",
-    padding: "10px 20px",
-    borderRadius: "5px",
-    fontWeight: "bold",
-    cursor: "pointer",
+    userSelect: "none",
+    touchAction: "none",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    boxShadow: "0 4px 14px rgba(13, 99, 214, 0.3)",
   },
 };
+
+// Animación del spinner de "conectando" (única regla global que este
+// componente necesita; se inyecta una sola vez).
+if (
+  typeof document !== "undefined" &&
+  !document.getElementById("sala-audio-keyframes")
+) {
+  const styleTag = document.createElement("style");
+  styleTag.id = "sala-audio-keyframes";
+  styleTag.innerHTML = `
+    @keyframes spin-sala-audio { to { transform: rotate(360deg); } }
+    @keyframes pulso-hablando-sala-audio {
+      0%, 100% { opacity: 0.5; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
+    }
+    @keyframes pulso-en-vivo-sala-audio {
+      0%, 100% { box-shadow: 0 0 24px rgba(229, 57, 53, 0.25); }
+      50% { box-shadow: 0 0 36px rgba(229, 57, 53, 0.45); }
+    }
+  `;
+  document.head.appendChild(styleTag);
+}

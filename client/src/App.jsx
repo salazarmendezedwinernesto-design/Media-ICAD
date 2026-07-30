@@ -6,6 +6,7 @@ import Pantalla from "./Pantalla";
 import Lider from "./Lider"; // Importamos el nuevo panel de líder
 import Moderador from "./Moderador";
 import Login from "./Login";
+import EnlaceExterno from "./EnlaceExterno";
 import { obtenerToken, borrarToken } from "./services/auth";
 
 export default function App() {
@@ -39,7 +40,12 @@ export default function App() {
   }
 
   if (rol === "lider") {
-    return <Lider alSalir={resetMenu} />;
+    return (
+      <>
+        <EnlaceExterno />
+        <Lider alSalir={resetMenu} />
+      </>
+    );
   }
 
   if (rol === "moderador") {

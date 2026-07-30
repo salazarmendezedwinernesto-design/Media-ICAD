@@ -4,6 +4,7 @@ import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
 import SalaAudio from "./SalaAudio";
 import BarraTransmision from "./BarraTransmision";
+import EnlaceExterno from "./EnlaceExterno";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -152,6 +153,7 @@ export default function Camara({ numero, alSalir }) {
       )}
 
       <BarraTransmision posicion="abajo" variante="compacta" />
+      <EnlaceExterno />
 
       <div style={styles.mainTallyArea}>
         <h1 style={styles.camLabel}>CAM {numero}</h1>

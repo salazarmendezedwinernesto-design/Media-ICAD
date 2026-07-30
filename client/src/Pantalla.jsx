@@ -4,6 +4,7 @@ import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
 import SalaAudio from "./SalaAudio";
 import BarraTransmision from "./BarraTransmision";
+import EnlaceExterno from "./EnlaceExterno";
 
 const SOCKET_URL = SERVER_URL;
 const DESTINATARIOS_PANTALLA = ["Director", "Pastor", "Lider"];
@@ -170,6 +171,7 @@ export default function Pantalla({ alSalir }) {
         variante="grande"
         mostrarBotonPresentar={true}
       />
+      <EnlaceExterno />
 
       {/* PANTALLA PRINCIPAL DE AVISOS RECIBIDOS */}
       <section

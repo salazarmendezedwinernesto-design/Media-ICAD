@@ -46,14 +46,36 @@ export function detectarEnlace(urlOriginal) {
  */
 export default function EnlaceExterno() {
   const [enlace, setEnlace] = useState({ activo: false, url: null });
-  const [minimizado, setMinimizado] = useState(false);
+  // Empieza minimizado (solo la franja con el título) para no ocupar
+  // espacio de golpe ni tapar botones de la pantalla; cada quien lo abre
+  // cuando quiera verlo.
+  const [minimizado, setMinimizado] = useState(true);
+  const [estadoConexion, setEstadoConexion] = useState("conectando"); // conectando | ok | error
   const socketRef = useRef(null);
 
   useEffect(() => {
-    const socket = io(SERVER_URL, { auth: { token: obtenerToken() } });
+    const token = obtenerToken();
+    if (!token) {
+      console.warn(
+        "[EnlaceExterno] No hay token guardado en este navegador; el socket no podrá autenticarse.",
+      );
+    }
+
+    const socket = io(SERVER_URL, { auth: { token } });
     socketRef.current = socket;
 
+    socket.on("connect", () => {
+      console.log("[EnlaceExterno] Socket conectado:", socket.id);
+      setEstadoConexion("ok");
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("[EnlaceExterno] Error de conexión:", err?.message || err);
+      setEstadoConexion("error");
+    });
+
     socket.on("enlace:estado", (datos) => {
+      console.log("[EnlaceExterno] enlace:estado recibido:", datos);
       if (datos) setEnlace(datos);
     });
 
@@ -63,7 +85,20 @@ export default function EnlaceExterno() {
   if (!enlace.activo || !enlace.url) return null;
 
   const info = detectarEnlace(enlace.url);
-  if (!info) return null;
+
+  // Si hay un enlace activo pero no se pudo interpretar como YouTube/Facebook,
+  // avisamos en vez de no mostrar nada (así se sabe que el problema es el
+  // formato del link y no que la conexión esté fallando).
+  if (!info) {
+    return (
+      <div style={estilos.contenedor}>
+        <p style={{ color: "#f87171", fontSize: "0.78rem", margin: 0 }}>
+          ⚠️ Hay un enlace publicado ({enlace.url}) pero no se reconoce como
+          YouTube ni Facebook.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div style={estilos.contenedor}>
@@ -72,10 +107,20 @@ export default function EnlaceExterno() {
           <span style={estilos.punto} />
           {info.tipo === "youtube" ? "YOUTUBE" : "FACEBOOK"} EN VIVO
         </span>
-        <button style={estilos.btnToggle} onClick={() => setMinimizado((v) => !v)}>
-          {minimizado ? "Ver ▼" : "Minimizar ▲"}
+        <button
+          style={estilos.btnToggle}
+          onClick={() => setMinimizado((v) => !v)}
+        >
+          {minimizado ? "Ver ▼" : "Ocultar ▲"}
         </button>
       </div>
+
+      {estadoConexion === "error" && (
+        <p style={{ color: "#f87171", fontSize: "0.72rem", margin: "6px 0 0" }}>
+          ⚠️ No se pudo autenticar el socket en este panel (revisa que hayas
+          iniciado sesión aquí).
+        </p>
+      )}
 
       {!minimizado && (
         <div style={estilos.marco}>
@@ -95,25 +140,26 @@ export default function EnlaceExterno() {
 }
 
 const estilos = {
+  // Tarjeta normal dentro del flujo de la página (igual que
+  // BarraTransmision): ocupa su espacio y empuja el resto del contenido,
+  // en vez de flotar encima y tapar botones u otros controles.
   contenedor: {
-    position: "fixed",
-    left: "10px",
-    bottom: "10px",
-    width: "min(360px, 92vw)",
+    width: "100%",
     backgroundColor: "#111424",
     border: "1px solid #2563eb",
-    borderRadius: "12px",
-    padding: "8px",
+    borderRadius: "10px",
+    padding: "8px 10px",
     boxSizing: "border-box",
-    zIndex: 9999,
-    boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+    boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
     fontFamily: "system-ui, sans-serif",
+    flexShrink: 0,
   },
   encabezado: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: "8px",
+    flexWrap: "wrap",
   },
   insignia: {
     display: "flex",
@@ -149,6 +195,7 @@ const estilos = {
     borderRadius: "8px",
     overflow: "hidden",
     aspectRatio: "16 / 9",
+    maxHeight: "220px",
     backgroundColor: "#000",
   },
   iframe: {

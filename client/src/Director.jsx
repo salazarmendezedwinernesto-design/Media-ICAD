@@ -340,6 +340,7 @@ export default function Director({ alSalir }) {
         ...styles.container,
         padding: esHorizontal ? "10px" : "12px",
         height: esHorizontal ? "100vh" : "auto",
+        overflow: esHorizontal ? "hidden" : "visible",
         width: "100vw",
       }}
     >
@@ -401,7 +402,9 @@ export default function Director({ alSalir }) {
           flexDirection: esHorizontal ? "row" : "column",
           gap: esHorizontal ? "12px" : "16px",
           width: "100%",
-          height: esHorizontal ? "calc(100vh - 70px)" : "auto",
+          flex: esHorizontal ? "1" : "none",
+          minHeight: 0,
+          overflowY: esHorizontal ? "hidden" : "visible",
         }}
       >
         {/* PANEL GENERAL LATERAL UNIFICADO */}

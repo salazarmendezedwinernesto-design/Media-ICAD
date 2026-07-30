@@ -13,6 +13,29 @@ const SALAS = ["1", "2", "3", "4", "5"];
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
+  // Servidor TURN de respaldo (gratuito, Open Relay Project / Metered).
+  // Sin esto, si alguna de las dos personas está en una red con NAT
+  // restrictivo (datos móviles, ciertos wifi), la conexión directa nunca
+  // se logra: entra a la sala pero jamás se escucha audio. Con TURN, si
+  // la conexión directa falla, el audio se retransmite por este servidor
+  // como respaldo (un poco más de latencia, pero SÍ se escucha).
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443?transport=tcp",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  // Si esto sigue sin ser suficiente en tus redes, lo ideal a futuro es
+  // un TURN propio o de pago (Twilio, Metered con cuenta, coturn propio):
   // { urls: "turn:tu-servidor-turn.com:3478", username: "user", credential: "pass" },
 ];
 

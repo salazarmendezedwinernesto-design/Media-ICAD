@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken } from "./services/auth";
+import { IconAlerta, IconEnlace } from "./Icons";
 
 /**
  * Convierte un link de YouTube o Facebook (pegado tal cual por el
@@ -92,9 +93,9 @@ export default function EnlaceExterno() {
   if (!info) {
     return (
       <div style={estilos.contenedor}>
-        <p style={{ color: "#f87171", fontSize: "0.78rem", margin: 0 }}>
-          ⚠️ Hay un enlace publicado ({enlace.url}) pero no se reconoce como
-          YouTube ni Facebook.
+        <p style={{ ...estilos.textoAdvertencia, margin: 0 }}>
+          <IconAlerta size={14} /> Hay un enlace publicado ({enlace.url}) pero
+          no se reconoce como YouTube ni Facebook.
         </p>
       </div>
     );
@@ -116,24 +117,34 @@ export default function EnlaceExterno() {
       </div>
 
       {estadoConexion === "error" && (
-        <p style={{ color: "#f87171", fontSize: "0.72rem", margin: "6px 0 0" }}>
-          ⚠️ No se pudo autenticar el socket en este panel (revisa que hayas
-          iniciado sesión aquí).
+        <p style={{ ...estilos.textoAdvertencia, margin: "6px 0 0" }}>
+          <IconAlerta size={13} /> No se pudo autenticar el socket en este panel
+          (revisa que hayas iniciado sesión aquí).
         </p>
       )}
 
       {!minimizado && (
-        <div style={estilos.marco}>
-          <iframe
-            key={info.embedUrl}
-            src={info.embedUrl}
-            title="Enlace externo"
-            style={estilos.iframe}
-            frameBorder="0"
-            allow="autoplay; encrypted-media; picture-in-picture"
-            allowFullScreen
-          />
-        </div>
+        <>
+          <div style={estilos.marco}>
+            <iframe
+              key={info.embedUrl}
+              src={info.embedUrl}
+              title="Enlace externo"
+              style={estilos.iframe}
+              frameBorder="0"
+              allow="autoplay; encrypted-media; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+          <a
+            href={enlace.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={estilos.enlaceRespaldo}
+          >
+            <IconEnlace size={12} /> ¿No carga? Abrir directo
+          </a>
+        </>
       )}
     </div>
   );
@@ -202,5 +213,21 @@ const estilos = {
     width: "100%",
     height: "100%",
     display: "block",
+  },
+  textoAdvertencia: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    color: "#f87171",
+    fontSize: "0.76rem",
+  },
+  enlaceRespaldo: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    color: "#60a5fa",
+    fontSize: "0.72rem",
+    textDecoration: "none",
+    marginTop: "6px",
   },
 };

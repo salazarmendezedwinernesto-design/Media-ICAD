@@ -7,6 +7,7 @@ import Lider from "./Lider"; // Importamos el nuevo panel de líder
 import Moderador from "./Moderador";
 import Login from "./Login";
 import EnlaceExterno from "./EnlaceExterno";
+import { IconEmisora } from "./Icons";
 import { obtenerToken, borrarToken } from "./services/auth";
 
 export default function App() {
@@ -113,10 +114,15 @@ export default function App() {
             ...styles.btnDirector,
             backgroundColor: "#dc2626",
             marginTop: "10px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "8px",
           }}
           onClick={() => setRol("moderador")}
         >
-          📡 PANEL DE MODERADOR
+          <IconEmisora size={18} color="#fff" />
+          PANEL DE MODERADOR
         </button>
 
         <div

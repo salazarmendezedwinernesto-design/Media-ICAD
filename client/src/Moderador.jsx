@@ -3,10 +3,20 @@ import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
 import { detectarEnlace } from "./EnlaceExterno";
+import {
+  IconFlechaIzquierda,
+  IconEmisora,
+  IconCandado,
+  IconOndas,
+  IconX,
+  IconOjo,
+  IconAlerta,
+  IconEnlace,
+} from "./Icons";
 
 export default function Moderador({ alSalir }) {
   const [desbloqueado, setDesbloqueado] = useState(
-    () => sessionStorage.getItem("mod_desbloqueado") === "1"
+    () => sessionStorage.getItem("mod_desbloqueado") === "1",
   );
   const [contrasena, setContrasena] = useState("");
   const [errorClave, setErrorClave] = useState("");
@@ -70,7 +80,9 @@ export default function Moderador({ alSalir }) {
 
     const info = detectarEnlace(campoUrl);
     if (!info) {
-      setErrorUrl("Ese link no parece de YouTube ni de Facebook. Revísalo e intenta de nuevo.");
+      setErrorUrl(
+        "Ese link no parece de YouTube ni de Facebook. Revísalo e intenta de nuevo.",
+      );
       return;
     }
 
@@ -91,14 +103,18 @@ export default function Moderador({ alSalir }) {
       <div style={styles.container}>
         <header style={styles.navbar}>
           <button style={styles.btnVolver} onClick={alSalir}>
-            ⬅️ Menú
+            <IconFlechaIzquierda size={16} /> Menú
           </button>
-          <h1 style={styles.navTitle}>📡 PANEL DE MODERADOR</h1>
+          <h1 style={styles.navTitle}>
+            <IconEmisora size={18} color="#9ca3af" /> PANEL DE MODERADOR
+          </h1>
           <div style={{ width: "90px" }} />
         </header>
 
         <section style={styles.tarjeta}>
-          <span style={styles.tituloSeccion}>🔒 ACCESO RESTRINGIDO</span>
+          <span style={styles.tituloSeccion}>
+            <IconCandado size={14} /> ACCESO RESTRINGIDO
+          </span>
           <form onSubmit={verificarContrasena} style={styles.formulario}>
             <label style={styles.etiqueta}>
               Este panel tiene una contraseña aparte. Ingrésala para continuar:
@@ -112,12 +128,17 @@ export default function Moderador({ alSalir }) {
               autoFocus
             />
             {errorClave && (
-              <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>{errorClave}</p>
+              <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>
+                {errorClave}
+              </p>
             )}
             <button
               type="submit"
               disabled={!contrasena.trim() || verificando}
-              style={{ ...styles.btnPrimario, opacity: !contrasena.trim() || verificando ? 0.4 : 1 }}
+              style={{
+                ...styles.btnPrimario,
+                opacity: !contrasena.trim() || verificando ? 0.4 : 1,
+              }}
             >
               {verificando ? "Verificando..." : "Entrar"}
             </button>
@@ -133,22 +154,41 @@ export default function Moderador({ alSalir }) {
     <div style={styles.container}>
       <header style={styles.navbar}>
         <button style={styles.btnVolver} onClick={alSalir}>
-          ⬅️ Menú
+          <IconFlechaIzquierda size={16} /> Menú
         </button>
-        <h1 style={styles.navTitle}>📡 PANEL DE MODERADOR</h1>
+        <h1 style={styles.navTitle}>
+          <IconEmisora size={18} color="#9ca3af" /> PANEL DE MODERADOR
+        </h1>
         <div style={{ width: "90px" }} />
       </header>
 
       <section style={styles.tarjeta}>
-        <span style={styles.tituloSeccion}>
-          {enlace.activo ? "🔴 ENLACE ACTIVO EN TODOS LOS PANELES" : "⚪ SIN ENLACE PUBLICADO"}
+        <span
+          style={{
+            ...styles.tituloSeccion,
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+          }}
+        >
+          {enlace.activo ? (
+            <>
+              <IconOndas size={14} color="#ef4444" /> ENLACE ACTIVO EN TODOS LOS
+              PANELES
+            </>
+          ) : (
+            "SIN ENLACE PUBLICADO"
+          )}
         </span>
         <p style={styles.notaAyuda}>
-          Pega aquí un link de YouTube o Facebook (una transmisión en
-          vivo, un video, lo que sea) y aparecerá automáticamente en
-          Director, Cámaras, Pastor, Líder y Pantalla. Cuando quieras
-          quitarlo, desaparece solo en todos lados — no queda nada
-          guardado.
+          Pega aquí un link de YouTube o Facebook (una transmisión en vivo, un
+          video, lo que sea) y aparecerá automáticamente en Director, Cámaras,
+          Pastor, Líder y Pantalla. Cuando quieras quitarlo, desaparece solo en
+          todos lados — no queda nada guardado.
+          <br />
+          <strong>Para Facebook:</strong> el video o transmisión en vivo tiene
+          que estar configurado como <strong>Público</strong> (no "Solo
+          amigos"), o el reproductor no podrá mostrarlo en ningún panel.
         </p>
 
         <form onSubmit={publicarEnlace} style={styles.formulario}>
@@ -160,27 +200,54 @@ export default function Moderador({ alSalir }) {
             style={styles.input}
           />
           {errorUrl && (
-            <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>{errorUrl}</p>
+            <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>
+              {errorUrl}
+            </p>
           )}
           <button
             type="submit"
             disabled={!campoUrl.trim()}
-            style={{ ...styles.btnPrimario, opacity: !campoUrl.trim() ? 0.4 : 1 }}
+            style={{
+              ...styles.btnPrimario,
+              opacity: !campoUrl.trim() ? 0.4 : 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+            }}
           >
-            📡 Publicar en todos los paneles
+            <IconEmisora size={16} /> Publicar en todos los paneles
           </button>
         </form>
 
         {enlace.activo && (
-          <button style={styles.btnQuitar} onClick={quitarEnlace}>
-            ✖️ Quitar enlace de todos los paneles
+          <button
+            style={{
+              ...styles.btnQuitar,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+            }}
+            onClick={quitarEnlace}
+          >
+            <IconX size={16} /> Quitar enlace de todos los paneles
           </button>
         )}
       </section>
 
       {enlace.activo && infoActual && (
         <section style={styles.tarjeta}>
-          <span style={styles.tituloSeccion}>👁️ VISTA PREVIA (así lo ven todos)</span>
+          <span
+            style={{
+              ...styles.tituloSeccion,
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <IconOjo size={14} /> VISTA PREVIA (así lo ven todos)
+          </span>
           <div style={styles.marcoPrevia}>
             <iframe
               key={infoActual.embedUrl}
@@ -192,14 +259,32 @@ export default function Moderador({ alSalir }) {
               allowFullScreen
             />
           </div>
+          <a
+            href={enlace.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={styles.enlaceRespaldo}
+          >
+            <IconEnlace size={14} /> ¿No carga? Abrir el link directo en una
+            pestaña nueva
+          </a>
         </section>
       )}
 
       {enlace.activo && !infoActual && (
         <section style={styles.tarjeta}>
-          <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>
-            Hay un enlace publicado pero no se pudo interpretar como
-            YouTube ni Facebook. Quítalo y publica uno nuevo.
+          <p
+            style={{
+              color: "#f87171",
+              fontSize: "0.85rem",
+              margin: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            }}
+          >
+            <IconAlerta size={16} /> Hay un enlace publicado pero no se pudo
+            interpretar como YouTube ni Facebook. Quítalo y publica uno nuevo.
           </p>
         </section>
       )}
@@ -236,8 +321,19 @@ const styles = {
     cursor: "pointer",
     fontWeight: "bold",
     padding: "8px 14px",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
   },
-  navTitle: { margin: 0, fontSize: "1.1rem", fontWeight: "800", color: "#9ca3af" },
+  navTitle: {
+    margin: 0,
+    fontSize: "1.1rem",
+    fontWeight: "800",
+    color: "#9ca3af",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
   tarjeta: {
     backgroundColor: "#11121a",
     borderRadius: "12px",
@@ -247,7 +343,12 @@ const styles = {
     flexDirection: "column",
     gap: "12px",
   },
-  tituloSeccion: { fontSize: "0.8rem", fontWeight: "700", letterSpacing: "1px", color: "#6b7280" },
+  tituloSeccion: {
+    fontSize: "0.8rem",
+    fontWeight: "700",
+    letterSpacing: "1px",
+    color: "#6b7280",
+  },
   formulario: { display: "flex", flexDirection: "column", gap: "10px" },
   etiqueta: { fontSize: "0.85rem", color: "#9ca3af", margin: 0 },
   input: {
@@ -279,7 +380,12 @@ const styles = {
     fontWeight: "bold",
     cursor: "pointer",
   },
-  notaAyuda: { fontSize: "0.75rem", color: "#6b7280", margin: 0, lineHeight: 1.5 },
+  notaAyuda: {
+    fontSize: "0.75rem",
+    color: "#6b7280",
+    margin: 0,
+    lineHeight: 1.5,
+  },
   marcoPrevia: {
     borderRadius: "8px",
     overflow: "hidden",
@@ -290,5 +396,13 @@ const styles = {
     width: "100%",
     height: "100%",
     display: "block",
+  },
+  enlaceRespaldo: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    color: "#60a5fa",
+    fontSize: "0.78rem",
+    textDecoration: "none",
   },
 };

@@ -10,6 +10,14 @@ const SALAS = ["1", "2", "3", "4", "5"];
 // estricto) bloquea la conexión directa, agrega aquí un servidor TURN
 // propio o de un proveedor (Twilio, Metered, coturn propio) como respaldo.
 // Sin TURN, en redes muy restrictivas la llamada podría no lograr conectar.
+// Ganancia (amplificación) aplicada al audio de LOS DEMÁS participantes.
+// El elemento <audio> del navegador tope a 1.0 (100%); con este GainNode
+// de Web Audio se puede superar ese límite cuando el micrófono de la
+// otra persona capta bajito. 1.0 = volumen normal, 2.0 = doble de fuerte.
+// Si sigue sonando bajo, sube este número (con cuidado de no saturar);
+// si suena distorsionado/con "clip", bájalo un poco.
+const GANANCIA_REMOTA = 2.4;
+
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
@@ -95,6 +103,7 @@ export default function SalaAudio({
   const audiosRef = useRef({}); // { socketId: <audio> element }
   const audioCtxRef = useRef(null); // AudioContext compartido para los analizadores
   const analizadoresRef = useRef({}); // { socketId: AnalyserNode }
+  const gananciasRef = useRef({}); // { socketId: GainNode } — amplificación del audio remoto
   const animacionVolumenRef = useRef(null); // id de requestAnimationFrame
   const gateGainRef = useRef(null); // GainNode del noise-gate del audio local
 
@@ -153,6 +162,20 @@ export default function SalaAudio({
         analizador,
         datos: new Uint8Array(analizador.frequencyBinCount),
       };
+
+      // Para el audio de LOS DEMÁS (nunca el propio, para no causar eco):
+      // además de medir el volumen para el indicador de "quién habla",
+      // lo reproducimos amplificado por encima del 100% nativo del
+      // navegador. El <audio> normal de ese participante se deja en
+      // volumen 0 (ver ontrack) para que el sonido real salga SOLO por
+      // este camino amplificado, y no se sume/duplique.
+      if (socketId !== "yo") {
+        const ganancia = ctx.createGain();
+        ganancia.gain.value = GANANCIA_REMOTA;
+        fuente.connect(ganancia);
+        ganancia.connect(ctx.destination);
+        gananciasRef.current[socketId] = ganancia;
+      }
     } catch (e) {
       console.error("No se pudo crear analizador de audio:", e);
     }
@@ -160,6 +183,15 @@ export default function SalaAudio({
 
   const quitarAnalizador = (socketId) => {
     delete analizadoresRef.current[socketId];
+    const ganancia = gananciasRef.current[socketId];
+    if (ganancia) {
+      try {
+        ganancia.disconnect();
+      } catch (e) {
+        /* ya estaba desconectado */
+      }
+      delete gananciasRef.current[socketId];
+    }
   };
 
   // Loop continuo (requestAnimationFrame) que revisa el volumen de cada
@@ -411,6 +443,11 @@ export default function SalaAudio({
         audiosRef.current[otroSocketId] = audioEl;
       }
       audioEl.srcObject = evento.streams[0];
+      // El sonido real de este participante sale amplificado por el
+      // GainNode que crea registrarAnalizador() (conectado directo al
+      // destino de audio). Este <audio> se deja en volumen 0 para que no
+      // se sume/duplique con esa otra salida.
+      audioEl.volume = 0;
       registrarAnalizador(otroSocketId, evento.streams[0]);
     };
 

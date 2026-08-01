@@ -14,9 +14,11 @@ const SALAS = ["1", "2", "3", "4", "5"];
 // El elemento <audio> del navegador tope a 1.0 (100%); con este GainNode
 // de Web Audio se puede superar ese límite cuando el micrófono de la
 // otra persona capta bajito. 1.0 = volumen normal, 2.0 = doble de fuerte.
-// Si sigue sonando bajo, sube este número (con cuidado de no saturar);
-// si suena distorsionado/con "clip", bájalo un poco.
-const GANANCIA_REMOTA = 2.4;
+// Va seguido de un compresor para que, aun subiendo bastante la
+// ganancia, no se distorsione ni "reviente" el audio.
+// Si sigue sonando bajo, sube este número; si empieza a sonar
+// distorsionado/con "clip", bájalo un poco.
+const GANANCIA_REMOTA = 4;
 
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -172,8 +174,19 @@ export default function SalaAudio({
       if (socketId !== "yo") {
         const ganancia = ctx.createGain();
         ganancia.gain.value = GANANCIA_REMOTA;
+
+        // Compresor: evita que la amplificación tan alta distorsione o
+        // "reviente" cuando la persona habla fuerte o cerca del mic.
+        const compresor = ctx.createDynamicsCompressor();
+        compresor.threshold.value = -18;
+        compresor.knee.value = 24;
+        compresor.ratio.value = 8;
+        compresor.attack.value = 0.003;
+        compresor.release.value = 0.25;
+
         fuente.connect(ganancia);
-        ganancia.connect(ctx.destination);
+        ganancia.connect(compresor);
+        compresor.connect(ctx.destination);
         gananciasRef.current[socketId] = ganancia;
       }
     } catch (e) {
@@ -616,6 +629,13 @@ export default function SalaAudio({
 
     socket.on("audio:participante_salio", (datos) => {
       cerrarPeer(datos.socketId);
+      // Antes esto no quitaba a la persona de la lista, así que su
+      // nombre se quedaba pegado para siempre (y duplicado si volvía a
+      // entrar más tarde). El servidor también reenvía la lista
+      // actualizada por las dudas, pero esto la corrige al instante.
+      setMiembros((anterior) =>
+        anterior.filter((m) => m.socketId !== datos.socketId),
+      );
     });
 
     socket.on("audio:live_actualizado", (datos) => {

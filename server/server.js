@@ -286,6 +286,15 @@ function salirDeSalaAudio(socket) {
     socketId: socket.id,
   });
 
+  // Y mandarles también la lista actualizada de la sala (sin esta
+  // persona). Antes esto no se hacía al salir —solo al entrar— y por
+  // eso el nombre se quedaba pegado en la lista de los demás para
+  // siempre, aunque ya se hubiera ido.
+  io.to(`audio:${sala}`).emit("audio:lista_sala", {
+    sala,
+    miembros: listaSala(sala),
+  });
+
   socket.data.salaAudio = null;
   socket.data.nombreAudio = null;
 }
@@ -414,7 +423,13 @@ io.on("connection", (socket) => {
   // --- Moderador -> Todos: quita el enlace publicado ---
   // Se BORRA por completo (nada queda guardado), igual que la transmisión.
   socket.on("enlace:quitar", () => {
-    enlaceExterno = { activo: false, url: null, tipo: null, publicadoPor: null, inicio: null };
+    enlaceExterno = {
+      activo: false,
+      url: null,
+      tipo: null,
+      publicadoPor: null,
+      inicio: null,
+    };
     io.emit("enlace:estado", enlaceExterno);
   });
 

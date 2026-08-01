@@ -14,9 +14,11 @@ const SALAS = ["1", "2", "3", "4", "5"];
 // El elemento <audio> del navegador tope a 1.0 (100%); con este GainNode
 // de Web Audio se puede superar ese límite cuando el micrófono de la
 // otra persona capta bajito. 1.0 = volumen normal, 2.0 = doble de fuerte.
-// Si sigue sonando bajo, sube este número (con cuidado de no saturar);
-// si suena distorsionado/con "clip", bájalo un poco.
-const GANANCIA_REMOTA = 2.4;
+// Va seguido de un compresor para que, aun subiendo bastante la
+// ganancia, no se distorsione ni "reviente" el audio.
+// Si sigue sonando bajo, sube este número; si empieza a sonar
+// distorsionado/con "clip", bájalo un poco.
+const GANANCIA_REMOTA = 4;
 
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -184,8 +186,20 @@ export default function SalaAudio({
       if (socketId !== "yo") {
         const ganancia = ctx.createGain();
         ganancia.gain.value = GANANCIA_REMOTA;
+
+        // Compresor: evita que la amplificación tan alta distorsione o
+        // "reviente" cuando la persona habla fuerte o cerca del mic.
+        // Nivela el pico sin bajar el volumen general percibido.
+        const compresor = ctx.createDynamicsCompressor();
+        compresor.threshold.value = -18;
+        compresor.knee.value = 24;
+        compresor.ratio.value = 8;
+        compresor.attack.value = 0.003;
+        compresor.release.value = 0.25;
+
         fuente.connect(ganancia);
-        ganancia.connect(ctx.destination);
+        ganancia.connect(compresor);
+        compresor.connect(ctx.destination);
         gananciasRef.current[socketId] = ganancia;
       }
     } catch (e) {
@@ -668,6 +682,12 @@ export default function SalaAudio({
 
     socket.on("audio:participante_salio", (datos) => {
       cerrarPeer(datos.socketId);
+      // Lo sacamos YA de la lista de miembros activos (antes esto no se
+      // hacía y el nombre se quedaba pegado para siempre, incluso
+      // duplicado si esa persona volvía a entrar más tarde).
+      setMiembros((anterior) =>
+        anterior.filter((m) => m.socketId !== datos.socketId),
+      );
       // Marcamos a esta persona como "saliendo" para que su nombre se
       // desvanezca con una animación en vez de desaparecer de golpe.
       setSaliendoIds((anterior) => {

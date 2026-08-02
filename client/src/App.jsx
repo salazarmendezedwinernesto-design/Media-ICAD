@@ -3,6 +3,7 @@ import Director from "./Director";
 import Camara from "./Camara";
 import Pastor from "./Pastor";
 import Pantalla from "./Pantalla";
+import PantallaRetorno from "./PantallaRetorno";
 import Lider from "./Lider"; // Importamos el nuevo panel de líder
 import Moderador from "./Moderador";
 import Login from "./Login";
@@ -14,10 +15,15 @@ export default function App() {
   const [autenticado, setAutenticado] = useState(() => !!obtenerToken());
   const [rol, setRol] = useState(null); // 'director' | 'camara' | 'pastor' | 'pantalla' | 'lider' | null
   const [numCamara, setNumCamara] = useState(null);
+  // Submenú exclusivo del rol "pantalla": elegir entre el panel de
+  // Comunicación (el de siempre, Pantalla.jsx) o el nuevo panel de
+  // Pantalla de Retorno (confidence monitor para el escenario).
+  const [subPantalla, setSubPantalla] = useState(null); // null | 'comunicacion' | 'retorno'
 
   const resetMenu = () => {
     setRol(null);
     setNumCamara(null);
+    setSubPantalla(null);
   };
 
   if (!autenticado) {
@@ -37,7 +43,49 @@ export default function App() {
   }
 
   if (rol === "pantalla") {
-    return <Pantalla alSalir={resetMenu} />;
+    if (subPantalla === "comunicacion") {
+      return <Pantalla alSalir={() => setSubPantalla(null)} />;
+    }
+    if (subPantalla === "retorno") {
+      return <PantallaRetorno alSalir={() => setSubPantalla(null)} />;
+    }
+    return (
+      <div style={styles.container}>
+        <header style={styles.header}>
+          <h1 style={styles.title}>OPERADOR DE PANTALLA</h1>
+          <p style={styles.subtitle}>Elige qué panel quieres usar</p>
+        </header>
+        <main style={styles.menuBox}>
+          <button
+            style={{ ...styles.btnDirector, backgroundColor: "#2e7d32" }}
+            onClick={() => setSubPantalla("comunicacion")}
+          >
+            💬 COMUNICACIÓN DE PANTALLA
+          </button>
+          <button
+            style={{
+              ...styles.btnDirector,
+              backgroundColor: "#0891b2",
+              marginTop: "10px",
+            }}
+            onClick={() => setSubPantalla("retorno")}
+          >
+            🖥️ PANTALLA DE RETORNO
+          </button>
+          <button
+            style={{
+              ...styles.btnCerrarSesion,
+              width: "100%",
+              marginTop: "20px",
+              textAlign: "center",
+            }}
+            onClick={resetMenu}
+          >
+            ⬅️ Volver al menú principal
+          </button>
+        </main>
+      </div>
+    );
   }
 
   if (rol === "lider") {

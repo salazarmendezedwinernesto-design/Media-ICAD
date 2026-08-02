@@ -238,6 +238,35 @@ function difundirMensajeBus(datos) {
   }
 }
 
+// ===== PANTALLA DE RETORNO (confidence monitor / stage display) =====
+// Estado guardado SOLO en memoria (igual que transmisión y enlace externo):
+// si el servidor se reinicia, se borra por completo, no queda historial.
+//
+// El "Emisor" (operador de pantalla) controla este estado; el/los
+// "Receptor" (el monitor físico en el escenario, ej. una tablet o un
+// monitor conectado a una laptop) solo lo reciben y lo muestran a pantalla
+// completa. Puede haber varios receptores conectados a la vez (todos
+// reciben lo mismo).
+//
+// Nota importante: por decisión explícita, este panel NO incluye texto
+// bíblico ni letras de alabanza -- solo texto libre que el operador
+// escribe a mano (nota de "siguiente", mensaje personalizado, etc).
+let pantallaRetorno = {
+  reloj: { visible: true },
+  temporizador: {
+    activo: false, // si está corriendo o no
+    modo: "regresiva", // "regresiva" (cuenta hacia 0) | "progresiva" (cronómetro hacia arriba)
+    duracionSegundos: 300, // usado solo en modo "regresiva"
+    finEpoch: null, // epoch ms en el que llega a 0 (modo regresiva, mientras activo)
+    inicioEpoch: null, // epoch ms en el que arrancó (modo progresiva, mientras activo)
+    restanteAlPausar: null, // segundos restantes/transcurridos guardados al pausar
+  },
+  mensaje: { texto: "", visible: false },
+  nota: { texto: "" }, // etiqueta corta de "siguiente", ej. "Después: Ofrenda"
+  actualizadoPor: null,
+  hora: null,
+};
+
 // ===== SALAS DE AUDIO (Walkie-Talkie por WebRTC) =====
 // Este servidor NUNCA transporta audio: solo coordina ("signaling") para
 // que los navegadores establezcan conexiones WebRTC directas (P2P) entre
@@ -316,6 +345,11 @@ io.on("connection", (socket) => {
   // Y el estado actual del enlace externo (YouTube/Facebook), por si el
   // Moderador ya lo había publicado antes de que este cliente entrara.
   socket.emit("enlace:estado", enlaceExterno);
+
+  // Y el estado actual de la Pantalla de Retorno, para que un Receptor
+  // que se conecta tarde (o recarga la página) vea de inmediato lo que
+  // ya estaba activo, en vez de quedarse en blanco hasta el próximo cambio.
+  socket.emit("retorno:estado", pantallaRetorno);
 
   // --- Director -> Cámara individual (tally: live/preview/standby + mensaje) ---
   socket.on("enviar_orden_director", (datos) => {
@@ -431,6 +465,41 @@ io.on("connection", (socket) => {
       inicio: null,
     };
     io.emit("enlace:estado", enlaceExterno);
+  });
+
+  // ===== PANTALLA DE RETORNO (confidence monitor) =====
+  // El Emisor (operador) manda el estado COMPLETO que quiere mostrar; el
+  // servidor lo guarda tal cual y lo reparte a todos (incluido el propio
+  // Emisor, para confirmar, y a cualquier Receptor conectado).
+  // datos: { reloj?, temporizador?, mensaje?, nota? } (todo opcional,
+  // se combina con lo que ya había para no perder el resto del estado).
+  socket.on("retorno:actualizar", (datos) => {
+    if (!datos || typeof datos !== "object") return;
+
+    pantallaRetorno = {
+      ...pantallaRetorno,
+      ...(datos.reloj
+        ? { reloj: { ...pantallaRetorno.reloj, ...datos.reloj } }
+        : {}),
+      ...(datos.temporizador
+        ? {
+            temporizador: {
+              ...pantallaRetorno.temporizador,
+              ...datos.temporizador,
+            },
+          }
+        : {}),
+      ...(datos.mensaje
+        ? { mensaje: { ...pantallaRetorno.mensaje, ...datos.mensaje } }
+        : {}),
+      ...(datos.nota
+        ? { nota: { ...pantallaRetorno.nota, ...datos.nota } }
+        : {}),
+      actualizadoPor: datos.de || socket.usuario || "Pantalla",
+      hora: Date.now(),
+    };
+
+    io.emit("retorno:estado", pantallaRetorno);
   });
 
   // ===== EVENTOS DE SALA DE AUDIO =====

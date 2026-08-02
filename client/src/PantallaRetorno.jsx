@@ -56,12 +56,14 @@ const OPCIONES_AVISO = [
 ];
 
 function formatearReloj(fecha) {
-  return fecha.toLocaleTimeString("es-ES", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  let horas = fecha.getHours();
+  const minutos = String(fecha.getMinutes()).padStart(2, "0");
+  const segundos = String(fecha.getSeconds()).padStart(2, "0");
+  const esPM = horas >= 12;
+  horas = horas % 12;
+  if (horas === 0) horas = 12;
+  const horasStr = String(horas).padStart(2, "0");
+  return `${horasStr}:${minutos}:${segundos} ${esPM ? "PM" : "AM"}`;
 }
 
 function formatearDuracion(totalSegundos) {
@@ -186,10 +188,16 @@ function PantallaRetornoEmisor({ alSalir }) {
   const [textoNota, setTextoNota] = useState("");
   const [segundosVista, setSegundosVista] = useState(0);
   const [confirmacion, setConfirmacion] = useState("");
+  const [conectado, setConectado] = useState(true);
+  const [conteoReceptores, setConteoReceptores] = useState(0);
+  const [horaActualPreview, setHoraActualPreview] = useState(new Date());
 
   useEffect(() => {
     const socket = io(SOCKET_URL, { auth: { token: obtenerToken() } });
     socketRef.current = socket;
+
+    socket.on("connect", () => setConectado(true));
+    socket.on("disconnect", () => setConectado(false));
 
     socket.on("connect_error", (err) => {
       if (err && err.message === "No autorizado") {
@@ -205,7 +213,16 @@ function PantallaRetornoEmisor({ alSalir }) {
       setTextoNota(datos.nota?.texto || "");
     });
 
+    socket.on("retorno:conteoReceptores", (n) => setConteoReceptores(n));
+
     return () => socket.disconnect();
+  }, []);
+
+  // Reloj de la vista previa (para que el mini-monitor también muestre la
+  // hora corriendo, igual que el Receptor real).
+  useEffect(() => {
+    const intervalo = setInterval(() => setHoraActualPreview(new Date()), 1000);
+    return () => clearInterval(intervalo);
   }, []);
 
   // Refresca el número que muestra el propio Emisor (vista previa) cada
@@ -340,8 +357,43 @@ function PantallaRetornoEmisor({ alSalir }) {
     !estado.temporizador.activo &&
     estado.temporizador.restanteAlPausar !== null;
 
+  // Mismo cálculo que en el Receptor, para que la vista previa parpadee
+  // exactamente en el mismo momento que el monitor real de tarima.
+  const avisoSegundosPreview = estado.temporizador.avisoSegundos ?? 30;
+  const tiempoCumplidoPreview =
+    estado.temporizador.modo === "regresiva" &&
+    estado.temporizador.activo &&
+    segundosVista <= 0;
+  const enAlertaPreview =
+    estado.temporizador.modo === "regresiva" &&
+    estado.temporizador.activo &&
+    !tiempoCumplidoPreview &&
+    segundosVista > 0 &&
+    segundosVista <= avisoSegundosPreview;
+
+  const posicionarPreview = (id) => {
+    const pos = LAYOUT_FIJO[id];
+    if (id === "reloj") {
+      return {
+        position: "absolute",
+        right: "3%",
+        top: `${pos.y}%`,
+        transform: "translateY(-50%)",
+      };
+    }
+    return {
+      position: "absolute",
+      left: `${pos.x}%`,
+      top: `${pos.y}%`,
+      transform: "translate(-50%, -50%)",
+    };
+  };
+
+  const colorAcentoPreview = estado.estilo?.colorAcento || "#f59e0b";
+
   return (
     <div style={estilosEmisor.container}>
+      <style>{ESTILOS_ANIMACION}</style>
       <header style={estilosEmisor.navbar}>
         <button style={estilosEmisor.btnVolver} onClick={alSalir}>
           ⬅️ Menú
@@ -354,236 +406,354 @@ function PantallaRetornoEmisor({ alSalir }) {
         <div style={estilosEmisor.bannerConfirmacion}>{confirmacion}</div>
       )}
 
-      {/* RELOJ */}
-      <section style={estilosEmisor.tarjeta}>
-        <div style={estilosEmisor.filaTitulo}>
-          <span style={estilosEmisor.tituloTarjeta}>🕒 RELOJ</span>
-          <button
-            style={{
-              ...estilosEmisor.btnToggle,
-              backgroundColor: estado.reloj.visible ? "#16a34a" : "#374151",
-            }}
-            onClick={toggleReloj}
-          >
-            {estado.reloj.visible ? "Visible en monitor" : "Oculto"}
-          </button>
-        </div>
-      </section>
-
-      {/* TEMPORIZADOR */}
-      <section style={estilosEmisor.tarjeta}>
-        <span style={estilosEmisor.tituloTarjeta}>
-          ⏱️ CRONÓMETRO / CUENTA REGRESIVA
-        </span>
-
-        <div style={estilosEmisor.vistaTemporizador}>
-          {formatearDuracion(segundosVista)}
-          {estado.temporizador.modo === "regresiva" &&
-            segundosVista <= 0 &&
-            temporizadorEnMarcha && (
-              <span style={estilosEmisor.avisoTiempo}> ⚠️ TIEMPO CUMPLIDO</span>
-            )}
-        </div>
-
-        <div>
-          <span style={estilosEmisor.etiquetaChica}>
-            🚨 Avisar (pantalla parpadea) cuando falten:
-          </span>
-          <div style={estilosEmisor.filaBotonesTemporizador}>
-            {OPCIONES_AVISO.map((op) => (
-              <button
-                key={op.segundos}
-                onClick={() => cambiarAviso(op.segundos)}
+      {/* Layout adaptable: en pantallas angostas (celular) todo queda en
+          una sola columna con la vista previa arriba; en pantallas anchas
+          (PC/tablet) los controles van a la izquierda y la vista previa +
+          estado de conexión quedan fijos a la derecha. */}
+      <div style={estilosEmisor.grid}>
+        <aside style={estilosEmisor.columnaLateral}>
+          {/* ESTADO DE CONEXIÓN */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>
+              📡 ESTADO DE CONEXIÓN
+            </span>
+            <div style={estilosEmisor.filaConexion}>
+              <span
                 style={{
-                  ...estilosEmisor.btnAccion,
-                  padding: "8px",
-                  fontSize: "0.8rem",
-                  backgroundColor:
-                    (estado.temporizador.avisoSegundos ?? avisoInput) ===
-                    op.segundos
-                      ? "#dc2626"
-                      : "#374151",
+                  ...estilosEmisor.puntoConexion,
+                  backgroundColor: conectado ? "#22c55e" : "#ef4444",
                 }}
-              >
-                {op.etiqueta}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {!temporizadorEnMarcha && !enPausa && (
-          <>
-            <div style={estilosEmisor.filaInputMinutos}>
-              <label style={estilosEmisor.etiquetaChica}>Minutos:</label>
-              <input
-                type="number"
-                min="1"
-                value={minutosInput}
-                onChange={(e) => setMinutosInput(Number(e.target.value) || 1)}
-                style={estilosEmisor.inputMinutos}
               />
+              <span style={{ fontWeight: 700 }}>
+                {conectado ? "Conectado al servidor" : "Sin conexión…"}
+              </span>
+            </div>
+            <span style={estilosEmisor.etiquetaChica}>
+              {conteoReceptores === 0
+                ? "📺 Ningún monitor conectado todavía"
+                : `📺 ${conteoReceptores} monitor${conteoReceptores > 1 ? "es" : ""} de escenario conectado${conteoReceptores > 1 ? "s" : ""}`}
+            </span>
+          </section>
+
+          {/* VISTA PREVIA DEL MONITOR REAL */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>
+              👁️ VISTA PREVIA DEL MONITOR
+            </span>
+            <div style={estilosEmisor.cajaPreview}>
+              {estado.reloj.visible && (
+                <div
+                  style={{
+                    ...estilosEmisor.previewReloj,
+                    ...posicionarPreview("reloj"),
+                  }}
+                >
+                  {formatearReloj(horaActualPreview)}
+                </div>
+              )}
+
+              {(estado.temporizador.activo ||
+                estado.temporizador.restanteAlPausar !== null) && (
+                <div
+                  style={{
+                    ...estilosEmisor.previewTemporizador,
+                    ...posicionarPreview("temporizador"),
+                    color: tiempoCumplidoPreview
+                      ? "#ef4444"
+                      : enAlertaPreview
+                        ? "#f97316"
+                        : colorAcentoPreview,
+                    animation: tiempoCumplidoPreview
+                      ? "retornoParpadeoFuerte 0.6s steps(1) infinite"
+                      : enAlertaPreview
+                        ? "retornoParpadeoSuave 1s ease-in-out infinite"
+                        : "none",
+                  }}
+                >
+                  {formatearDuracion(Math.abs(segundosVista))}
+                </div>
+              )}
+
+              {estado.mensaje.visible && estado.mensaje.texto && (
+                <div
+                  style={{
+                    ...estilosEmisor.previewMensaje,
+                    ...posicionarPreview("mensaje"),
+                    color: colorAcentoPreview,
+                  }}
+                >
+                  {estado.mensaje.texto}
+                </div>
+              )}
+
+              {estado.nota.texto && (
+                <div
+                  style={{
+                    ...estilosEmisor.previewNota,
+                    ...posicionarPreview("nota"),
+                    color: colorAcentoPreview,
+                  }}
+                >
+                  {estado.nota.texto}
+                </div>
+              )}
+            </div>
+            <span style={estilosEmisor.etiquetaChica}>
+              Así se ve ahora mismo en el monitor real.
+            </span>
+          </section>
+        </aside>
+
+        <div style={estilosEmisor.columnaControles}>
+          {/* RELOJ */}
+          <section style={estilosEmisor.tarjeta}>
+            <div style={estilosEmisor.filaTitulo}>
+              <span style={estilosEmisor.tituloTarjeta}>🕒 RELOJ</span>
               <button
-                style={estilosEmisor.btnAccion}
-                onClick={iniciarRegresiva}
+                style={{
+                  ...estilosEmisor.btnToggle,
+                  backgroundColor: estado.reloj.visible ? "#16a34a" : "#374151",
+                }}
+                onClick={toggleReloj}
               >
-                ▶️ Iniciar cuenta regresiva
+                {estado.reloj.visible ? "Visible en monitor" : "Oculto"}
               </button>
             </div>
-            <button
-              style={{ ...estilosEmisor.btnAccion, backgroundColor: "#7c3aed" }}
-              onClick={iniciarCronometro}
-            >
-              ▶️ Iniciar cronómetro (cuenta hacia arriba)
-            </button>
-          </>
-        )}
+          </section>
 
-        {(temporizadorEnMarcha || enPausa) && (
-          <div style={estilosEmisor.filaBotonesTemporizador}>
-            {temporizadorEnMarcha ? (
-              <button
-                style={{
-                  ...estilosEmisor.btnAccion,
-                  backgroundColor: "#d97706",
-                }}
-                onClick={pausarTemporizador}
-              >
-                ⏸️ Pausar
-              </button>
-            ) : (
-              <button
-                style={{
-                  ...estilosEmisor.btnAccion,
-                  backgroundColor: "#16a34a",
-                }}
-                onClick={reanudarTemporizador}
-              >
-                ▶️ Reanudar
-              </button>
+          {/* TEMPORIZADOR */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>
+              ⏱️ CRONÓMETRO / CUENTA REGRESIVA
+            </span>
+
+            <div style={estilosEmisor.vistaTemporizador}>
+              {formatearDuracion(segundosVista)}
+              {estado.temporizador.modo === "regresiva" &&
+                segundosVista <= 0 &&
+                temporizadorEnMarcha && (
+                  <span style={estilosEmisor.avisoTiempo}>
+                    {" "}
+                    ⚠️ TIEMPO CUMPLIDO
+                  </span>
+                )}
+            </div>
+
+            <div>
+              <span style={estilosEmisor.etiquetaChica}>
+                🚨 Avisar (pantalla parpadea) cuando falten:
+              </span>
+              <div style={estilosEmisor.filaBotonesTemporizador}>
+                {OPCIONES_AVISO.map((op) => (
+                  <button
+                    key={op.segundos}
+                    onClick={() => cambiarAviso(op.segundos)}
+                    style={{
+                      ...estilosEmisor.btnAccion,
+                      padding: "8px",
+                      fontSize: "0.8rem",
+                      backgroundColor:
+                        (estado.temporizador.avisoSegundos ?? avisoInput) ===
+                        op.segundos
+                          ? "#dc2626"
+                          : "#374151",
+                    }}
+                  >
+                    {op.etiqueta}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {!temporizadorEnMarcha && !enPausa && (
+              <>
+                <div style={estilosEmisor.filaInputMinutos}>
+                  <label style={estilosEmisor.etiquetaChica}>Minutos:</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={minutosInput}
+                    onChange={(e) =>
+                      setMinutosInput(Number(e.target.value) || 1)
+                    }
+                    style={estilosEmisor.inputMinutos}
+                  />
+                  <button
+                    style={estilosEmisor.btnAccion}
+                    onClick={iniciarRegresiva}
+                  >
+                    ▶️ Iniciar cuenta regresiva
+                  </button>
+                </div>
+                <button
+                  style={{
+                    ...estilosEmisor.btnAccion,
+                    backgroundColor: "#7c3aed",
+                  }}
+                  onClick={iniciarCronometro}
+                >
+                  ▶️ Iniciar cronómetro (cuenta hacia arriba)
+                </button>
+              </>
             )}
-            <button
-              style={{ ...estilosEmisor.btnAccion, backgroundColor: "#dc2626" }}
-              onClick={detenerTemporizador}
-            >
-              ⏹️ Detener
-            </button>
-          </div>
-        )}
-      </section>
 
-      {/* MENSAJE PERSONALIZADO */}
-      <section style={estilosEmisor.tarjeta}>
-        <span style={estilosEmisor.tituloTarjeta}>
-          💬 MENSAJE PARA EL ESCENARIO
-        </span>
-        <form onSubmit={enviarMensaje} style={estilosEmisor.formMensaje}>
-          <input
-            type="text"
-            value={textoMensaje}
-            onChange={(e) => setTextoMensaje(e.target.value)}
-            placeholder="Ej: 2 minutos y entramos, Ajusta el micrófono..."
-            style={estilosEmisor.inputTexto}
-          />
-          <div style={estilosEmisor.filaBotonesTemporizador}>
-            <button type="submit" style={estilosEmisor.btnAccion}>
-              📤 Mostrar en monitor
-            </button>
-            <button
-              type="button"
-              style={{ ...estilosEmisor.btnAccion, backgroundColor: "#374151" }}
-              onClick={ocultarMensaje}
-            >
-              Ocultar
-            </button>
-          </div>
-        </form>
-      </section>
+            {(temporizadorEnMarcha || enPausa) && (
+              <div style={estilosEmisor.filaBotonesTemporizador}>
+                {temporizadorEnMarcha ? (
+                  <button
+                    style={{
+                      ...estilosEmisor.btnAccion,
+                      backgroundColor: "#d97706",
+                    }}
+                    onClick={pausarTemporizador}
+                  >
+                    ⏸️ Pausar
+                  </button>
+                ) : (
+                  <button
+                    style={{
+                      ...estilosEmisor.btnAccion,
+                      backgroundColor: "#16a34a",
+                    }}
+                    onClick={reanudarTemporizador}
+                  >
+                    ▶️ Reanudar
+                  </button>
+                )}
+                <button
+                  style={{
+                    ...estilosEmisor.btnAccion,
+                    backgroundColor: "#dc2626",
+                  }}
+                  onClick={detenerTemporizador}
+                >
+                  ⏹️ Detener
+                </button>
+              </div>
+            )}
+          </section>
 
-      {/* NOTA DE SIGUIENTE */}
-      <section style={estilosEmisor.tarjeta}>
-        <span style={estilosEmisor.tituloTarjeta}>
-          📌 NOTA (SIGUIENTE / AVISO CORTO)
-        </span>
-        <div style={estilosEmisor.gridNotasRapidas}>
-          {NOTAS_RAPIDAS.map((n) => (
-            <button
-              key={n}
-              style={{
-                ...estilosEmisor.btnNotaRapida,
-                borderColor: textoNota === n ? "#3b82f6" : "#2d303f",
-              }}
-              onClick={() => enviarNota(n)}
-            >
-              {n}
-            </button>
-          ))}
-        </div>
-        <div style={estilosEmisor.formMensaje}>
-          <input
-            type="text"
-            value={textoNota}
-            onChange={(e) => setTextoNota(e.target.value)}
-            placeholder="Escribe una nota personalizada..."
-            style={estilosEmisor.inputTexto}
-          />
-          <div style={estilosEmisor.filaBotonesTemporizador}>
-            <button
-              style={estilosEmisor.btnAccion}
-              onClick={() => enviarNota(textoNota)}
-            >
-              📤 Aplicar nota
-            </button>
-            <button
-              style={{ ...estilosEmisor.btnAccion, backgroundColor: "#374151" }}
-              onClick={() => enviarNota("")}
-            >
-              Limpiar
-            </button>
-          </div>
-        </div>
-      </section>
-      {/* APARIENCIA DEL MONITOR */}
-      <section style={estilosEmisor.tarjeta}>
-        <span style={estilosEmisor.tituloTarjeta}>
-          🎨 APARIENCIA DEL MONITOR
-        </span>
+          {/* MENSAJE PERSONALIZADO */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>
+              💬 MENSAJE PARA EL ESCENARIO
+            </span>
+            <form onSubmit={enviarMensaje} style={estilosEmisor.formMensaje}>
+              <input
+                type="text"
+                value={textoMensaje}
+                onChange={(e) => setTextoMensaje(e.target.value)}
+                placeholder="Ej: 2 minutos y entramos, Ajusta el micrófono..."
+                style={estilosEmisor.inputTexto}
+              />
+              <div style={estilosEmisor.filaBotonesTemporizador}>
+                <button type="submit" style={estilosEmisor.btnAccion}>
+                  📤 Mostrar en monitor
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...estilosEmisor.btnAccion,
+                    backgroundColor: "#374151",
+                  }}
+                  onClick={ocultarMensaje}
+                >
+                  Ocultar
+                </button>
+              </div>
+            </form>
+          </section>
 
-        <span style={estilosEmisor.etiquetaChica}>Color de acento:</span>
-        <div style={estilosEmisor.gridColores}>
-          {PALETA_COLORES.map((c) => (
-            <button
-              key={c.valor}
-              title={c.nombre}
-              onClick={() => cambiarColor(c.valor)}
-              style={{
-                ...estilosEmisor.swatchColor,
-                backgroundColor: c.valor,
-                outline:
-                  estado.estilo?.colorAcento === c.valor
-                    ? "3px solid #fff"
-                    : "3px solid transparent",
-              }}
-            />
-          ))}
-        </div>
+          {/* NOTA DE SIGUIENTE */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>
+              📌 NOTA (SIGUIENTE / AVISO CORTO)
+            </span>
+            <div style={estilosEmisor.gridNotasRapidas}>
+              {NOTAS_RAPIDAS.map((n) => (
+                <button
+                  key={n}
+                  style={{
+                    ...estilosEmisor.btnNotaRapida,
+                    borderColor: textoNota === n ? "#3b82f6" : "#2d303f",
+                  }}
+                  onClick={() => enviarNota(n)}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <div style={estilosEmisor.formMensaje}>
+              <input
+                type="text"
+                value={textoNota}
+                onChange={(e) => setTextoNota(e.target.value)}
+                placeholder="Escribe una nota personalizada..."
+                style={estilosEmisor.inputTexto}
+              />
+              <div style={estilosEmisor.filaBotonesTemporizador}>
+                <button
+                  style={estilosEmisor.btnAccion}
+                  onClick={() => enviarNota(textoNota)}
+                >
+                  📤 Aplicar nota
+                </button>
+                <button
+                  style={{
+                    ...estilosEmisor.btnAccion,
+                    backgroundColor: "#374151",
+                  }}
+                  onClick={() => enviarNota("")}
+                >
+                  Limpiar
+                </button>
+              </div>
+            </div>
+          </section>
+          {/* APARIENCIA DEL MONITOR */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>
+              🎨 APARIENCIA DEL MONITOR
+            </span>
 
-        <span style={estilosEmisor.etiquetaChica}>Tamaño del texto:</span>
-        <div style={estilosEmisor.filaBotonesTemporizador}>
-          {TAMANOS_MONITOR.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => cambiarTamano(t.id)}
-              style={{
-                ...estilosEmisor.btnAccion,
-                backgroundColor:
-                  estado.estilo?.tamano === t.id ? "#2563eb" : "#374151",
-              }}
-            >
-              {t.etiqueta}
-            </button>
-          ))}
+            <span style={estilosEmisor.etiquetaChica}>Color de acento:</span>
+            <div style={estilosEmisor.gridColores}>
+              {PALETA_COLORES.map((c) => (
+                <button
+                  key={c.valor}
+                  title={c.nombre}
+                  onClick={() => cambiarColor(c.valor)}
+                  style={{
+                    ...estilosEmisor.swatchColor,
+                    backgroundColor: c.valor,
+                    outline:
+                      estado.estilo?.colorAcento === c.valor
+                        ? "3px solid #fff"
+                        : "3px solid transparent",
+                  }}
+                />
+              ))}
+            </div>
+
+            <span style={estilosEmisor.etiquetaChica}>Tamaño del texto:</span>
+            <div style={estilosEmisor.filaBotonesTemporizador}>
+              {TAMANOS_MONITOR.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => cambiarTamano(t.id)}
+                  style={{
+                    ...estilosEmisor.btnAccion,
+                    backgroundColor:
+                      estado.estilo?.tamano === t.id ? "#2563eb" : "#374151",
+                  }}
+                >
+                  {t.etiqueta}
+                </button>
+              ))}
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
     </div>
   );
 }
@@ -596,11 +766,48 @@ function PantallaRetornoReceptor({ alSalir }) {
   const [segundosVista, setSegundosVista] = useState(0);
   const [mostrarBarra, setMostrarBarra] = useState(true);
   const [enPantallaCompleta, setEnPantallaCompleta] = useState(false);
+  const [conectado, setConectado] = useState(true);
   const contenedorRef = useRef(null);
+  // Screen Wake Lock: evita que la tablet/celular en tarima apague o
+  // bloquee la pantalla solo (mismo patrón que en SalaAudio.jsx). Sin
+  // esto, el monitor se puede quedar en negro a media prédica.
+  const wakeLockRef = useRef(null);
+
+  const pedirWakeLock = async () => {
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch (e) {
+      // Puede fallar si la pestaña no está visible en ese instante o el
+      // navegador no lo soporta; no es un error fatal, seguimos igual.
+      console.warn("No se pudo activar Wake Lock:", e);
+    }
+  };
+
+  const soltarWakeLock = async () => {
+    try {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+      }
+    } catch (e) {
+      /* ya se soltó solo o no existía */
+    } finally {
+      wakeLockRef.current = null;
+    }
+  };
 
   useEffect(() => {
     const socket = io(SOCKET_URL, { auth: { token: obtenerToken() } });
     socketRef.current = socket;
+
+    socket.on("connect", () => {
+      setConectado(true);
+      // Se re-anuncia como Receptor en cada conexión (también en
+      // reconexiones, porque el socket.id cambia cada vez).
+      socket.emit("retorno:soyReceptor");
+    });
+    socket.on("disconnect", () => setConectado(false));
 
     socket.on("connect_error", (err) => {
       if (err && err.message === "No autorizado") {
@@ -611,7 +818,26 @@ function PantallaRetornoReceptor({ alSalir }) {
 
     socket.on("retorno:estado", (datos) => setEstado(datos));
 
-    return () => socket.disconnect();
+    pedirWakeLock();
+
+    return () => {
+      soltarWakeLock();
+      socket.disconnect();
+    };
+  }, []);
+
+  // Re-solicita el Wake Lock cuando la pestaña vuelve a estar visible: el
+  // navegador lo suelta solo al pasar a segundo plano (ej. al bloquear el
+  // celular), así que hay que pedirlo de nuevo apenas vuelve a mostrarse.
+  useEffect(() => {
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === "visible") {
+        pedirWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", alCambiarVisibilidad);
+    return () =>
+      document.removeEventListener("visibilitychange", alCambiarVisibilidad);
   }, []);
 
   useEffect(() => {
@@ -683,6 +909,18 @@ function PantallaRetornoReceptor({ alSalir }) {
 
   const posicionar = (id) => {
     const pos = LAYOUT_FIJO[id];
+    // El reloj se ancla por su borde DERECHO (en vez de centrado) para
+    // que, si el texto "08:45:10 PM" es más ancho que en formato 24h, en
+    // vez de salirse de la pantalla por la derecha simplemente crezca
+    // hacia la izquierda.
+    if (id === "reloj") {
+      return {
+        position: "absolute",
+        right: "3%",
+        top: `${pos.y}%`,
+        transform: "translateY(-50%)",
+      };
+    }
     return {
       position: "absolute",
       left: `${pos.x}%`,
@@ -701,6 +939,22 @@ function PantallaRetornoReceptor({ alSalir }) {
       onClick={() => setMostrarBarra((v) => !v)}
     >
       <style>{ESTILOS_ANIMACION}</style>
+
+      {/* Indicador discreto de conexión: verde = conectado al servidor,
+          rojo parpadeante = se perdió la conexión (ej. wifi cortado o
+          Render dormido). Se queda visible aunque se oculte la barra de
+          arriba, porque si el monitor se desconecta hay que notarlo. */}
+      <div
+        title={conectado ? "Conectado" : "Sin conexión"}
+        style={{
+          ...estilosReceptor.puntoConexion,
+          backgroundColor: conectado ? "#22c55e" : "#ef4444",
+          animation: conectado
+            ? "none"
+            : "retornoParpadeoFuerte 0.8s ease-in-out infinite",
+        }}
+      />
+
       {mostrarBarra && (
         <div style={estilosReceptor.barraSuperior}>
           <button
@@ -728,7 +982,7 @@ function PantallaRetornoReceptor({ alSalir }) {
           style={{
             ...estilosReceptor.reloj,
             ...posicionar("reloj"),
-            fontSize: `clamp(${1.5 * escala}rem, ${4 * escala}vh, ${3 * escala}rem)`,
+            fontSize: `clamp(${1.6 * escala}rem, min(${6 * escala}vh, ${9 * escala}vw), ${4.5 * escala}rem)`,
           }}
         >
           {formatearReloj(horaActual)}
@@ -928,6 +1182,83 @@ const estilosEmisor = {
     fontSize: "0.85rem",
     fontWeight: "bold",
   },
+  // Layout adaptable con flexbox: cada columna tiene un "flex-basis"
+  // mínimo, así que en pantallas angostas (celular) se apilan solas en
+  // una sola columna, y en pantallas anchas (PC/tablet) quedan una al
+  // lado de la otra -- sin necesidad de media queries.
+  grid: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "16px",
+    alignItems: "flex-start",
+  },
+  columnaControles: {
+    flex: "2 1 380px",
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  columnaLateral: {
+    flex: "1 1 300px",
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+    position: "sticky",
+    top: "12px",
+  },
+  filaConexion: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  puntoConexion: {
+    width: "10px",
+    height: "10px",
+    borderRadius: "50%",
+    flexShrink: 0,
+  },
+  cajaPreview: {
+    position: "relative",
+    width: "100%",
+    aspectRatio: "16 / 9",
+    backgroundColor: "#000",
+    border: "1px solid #2d303f",
+    borderRadius: "8px",
+    overflow: "hidden",
+    containerType: "size",
+  },
+  previewReloj: {
+    position: "absolute",
+    fontWeight: "900",
+    fontVariantNumeric: "tabular-nums",
+    color: "#9ca3af",
+    whiteSpace: "nowrap",
+    fontSize: "6cqh",
+  },
+  previewTemporizador: {
+    position: "absolute",
+    fontWeight: "900",
+    fontVariantNumeric: "tabular-nums",
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+    fontSize: "20cqh",
+  },
+  previewMensaje: {
+    position: "absolute",
+    fontWeight: "800",
+    maxWidth: "90%",
+    textAlign: "center",
+    wordBreak: "break-word",
+    fontSize: "6cqh",
+  },
+  previewNota: {
+    position: "absolute",
+    fontWeight: "700",
+    whiteSpace: "nowrap",
+    fontSize: "3.2cqh",
+  },
   tarjeta: {
     backgroundColor: "#11121a",
     borderRadius: "12px",
@@ -1089,5 +1420,15 @@ const estilosReceptor = {
     fontWeight: "800",
     letterSpacing: "2px",
     marginTop: "8px",
+  },
+  puntoConexion: {
+    position: "absolute",
+    bottom: "10px",
+    left: "10px",
+    width: "10px",
+    height: "10px",
+    borderRadius: "50%",
+    zIndex: 20,
+    opacity: 0.7,
   },
 };

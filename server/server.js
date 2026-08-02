@@ -269,6 +269,11 @@ let pantallaRetorno = {
   hora: null,
 };
 
+// socketIds de los Receptores (monitores de escenario) actualmente
+// conectados. Sirve para que el Emisor sepa cuántos monitores reales
+// están mirando lo que manda, en vez de mandar "a ciegas".
+const receptoresRetorno = new Set();
+
 // ===== SALAS DE AUDIO (Walkie-Talkie por WebRTC) =====
 // Este servidor NUNCA transporta audio: solo coordina ("signaling") para
 // que los navegadores establezcan conexiones WebRTC directas (P2P) entre
@@ -352,6 +357,18 @@ io.on("connection", (socket) => {
   // que se conecta tarde (o recarga la página) vea de inmediato lo que
   // ya estaba activo, en vez de quedarse en blanco hasta el próximo cambio.
   socket.emit("retorno:estado", pantallaRetorno);
+
+  // Le manda al que se acaba de conectar cuántos Receptores (monitores de
+  // escenario) hay activos en este momento, para que el Emisor no arranque
+  // "a ciegas" sin saber si hay algo del otro lado.
+  socket.emit("retorno:conteoReceptores", receptoresRetorno.size);
+
+  // Un Receptor avisa que es un monitor de escenario (y no un Emisor u
+  // otro panel) apenas se monta, para que se lo cuente en el indicador.
+  socket.on("retorno:soyReceptor", () => {
+    receptoresRetorno.add(socket.id);
+    io.emit("retorno:conteoReceptores", receptoresRetorno.size);
+  });
 
   // --- Director -> Cámara individual (tally: live/preview/standby + mensaje) ---
   socket.on("enviar_orden_director", (datos) => {
@@ -591,6 +608,9 @@ io.on("connection", (socket) => {
   socket.on("disconnect", (motivo) => {
     console.log(`Cliente desconectado: ${socket.id} (${motivo})`);
     salirDeSalaAudio(socket);
+    if (receptoresRetorno.delete(socket.id)) {
+      io.emit("retorno:conteoReceptores", receptoresRetorno.size);
+    }
   });
 });
 

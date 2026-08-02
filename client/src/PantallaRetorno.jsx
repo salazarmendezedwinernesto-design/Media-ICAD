@@ -35,6 +35,23 @@ const TAMANOS_MONITOR = [
   { id: "extra", etiqueta: "Extra grande" },
 ];
 
+// Posición por defecto de cada elemento dentro del monitor, en PORCENTAJE
+// del ancho/alto (x=0 izquierda, x=100 derecha; y=0 arriba, y=100 abajo).
+// El punto (x,y) es el CENTRO del elemento.
+const DEFAULT_LAYOUT = {
+  reloj: { x: 88, y: 10 },
+  temporizador: { x: 50, y: 42 },
+  mensaje: { x: 50, y: 68 },
+  nota: { x: 50, y: 92 },
+};
+
+const ELEMENTOS_ARRASTRABLES = [
+  { id: "reloj", etiqueta: "🕒 Reloj" },
+  { id: "temporizador", etiqueta: "⏱️ Cronómetro" },
+  { id: "mensaje", etiqueta: "💬 Mensaje" },
+  { id: "nota", etiqueta: "📌 Nota" },
+];
+
 function formatearReloj(fecha) {
   return fecha.toLocaleTimeString("es-ES", {
     hour: "2-digit",
@@ -152,7 +169,16 @@ function PantallaRetornoEmisor({ alSalir }) {
     mensaje: { texto: "", visible: false },
     nota: { texto: "" },
     estilo: { colorAcento: "#f59e0b", tamano: "grande" },
+    layout: DEFAULT_LAYOUT,
   });
+
+  const estadoRef = useRef(estado);
+  useEffect(() => {
+    estadoRef.current = estado;
+  }, [estado]);
+
+  const previewRef = useRef(null);
+  const arrastrandoRef = useRef(null);
 
   const [minutosInput, setMinutosInput] = useState(5);
   const [textoMensaje, setTextoMensaje] = useState("");
@@ -298,6 +324,45 @@ function PantallaRetornoEmisor({ alSalir }) {
 
   const cambiarTamano = (id) => {
     enviar({ estilo: { tamano: id } });
+  };
+
+  // ---- Editor de diseño (arrastrar y soltar) ----
+  const layoutActual = estado.layout || DEFAULT_LAYOUT;
+
+  const manejarPointerMove = (e) => {
+    const id = arrastrandoRef.current;
+    if (!id || !previewRef.current) return;
+    const rect = previewRef.current.getBoundingClientRect();
+    let x = ((e.clientX - rect.left) / rect.width) * 100;
+    let y = ((e.clientY - rect.top) / rect.height) * 100;
+    x = Math.min(97, Math.max(3, x));
+    y = Math.min(96, Math.max(4, y));
+    setEstado((prev) => ({
+      ...prev,
+      layout: { ...(prev.layout || DEFAULT_LAYOUT), [id]: { x, y } },
+    }));
+  };
+
+  const manejarPointerUp = () => {
+    const id = arrastrandoRef.current;
+    arrastrandoRef.current = null;
+    window.removeEventListener("pointermove", manejarPointerMove);
+    window.removeEventListener("pointerup", manejarPointerUp);
+    if (id) {
+      enviar({ layout: { [id]: estadoRef.current.layout[id] } });
+    }
+  };
+
+  const iniciarArrastre = (id) => (e) => {
+    e.preventDefault();
+    arrastrandoRef.current = id;
+    window.addEventListener("pointermove", manejarPointerMove);
+    window.addEventListener("pointerup", manejarPointerUp);
+  };
+
+  const restablecerDiseno = () => {
+    setEstado((prev) => ({ ...prev, layout: DEFAULT_LAYOUT }));
+    enviar({ layout: DEFAULT_LAYOUT });
   };
 
   const temporizadorEnMarcha = estado.temporizador.activo;
@@ -523,6 +588,41 @@ function PantallaRetornoEmisor({ alSalir }) {
           ))}
         </div>
       </section>
+
+      {/* EDITOR DE DISEÑO (arrastrar y soltar, como Holyrics/ProPresenter/FreeShow) */}
+      <section style={estilosEmisor.tarjeta}>
+        <div style={estilosEmisor.filaTitulo}>
+          <span style={estilosEmisor.tituloTarjeta}>🖱️ EDITOR DE DISEÑO</span>
+          <button
+            style={estilosEmisor.btnRestablecer}
+            onClick={restablecerDiseno}
+          >
+            Restablecer
+          </button>
+        </div>
+        <span style={estilosEmisor.etiquetaChica}>
+          Arrastra cada elemento a donde lo quieras ver en el monitor:
+        </span>
+        <div ref={previewRef} style={estilosEmisor.previewMonitor}>
+          {ELEMENTOS_ARRASTRABLES.map((el) => {
+            const pos = layoutActual[el.id] || DEFAULT_LAYOUT[el.id];
+            return (
+              <div
+                key={el.id}
+                onPointerDown={iniciarArrastre(el.id)}
+                style={{
+                  ...estilosEmisor.chipArrastrable,
+                  left: `${pos.x}%`,
+                  top: `${pos.y}%`,
+                  borderColor: estado.estilo?.colorAcento || "#f59e0b",
+                }}
+              >
+                {el.etiqueta}
+              </div>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
@@ -602,11 +702,22 @@ function PantallaRetornoReceptor({ alSalir }) {
   const colorAcento = estado.estilo?.colorAcento || "#f59e0b";
   const tamano = estado.estilo?.tamano || "grande";
   const escala = tamano === "extra" ? 1.35 : 1;
+  const layout = estado.layout || DEFAULT_LAYOUT;
 
   const tiempoCumplido =
     estado.temporizador.modo === "regresiva" &&
     estado.temporizador.activo &&
     segundosVista <= 0;
+
+  const posicionar = (id) => {
+    const pos = layout[id] || DEFAULT_LAYOUT[id];
+    return {
+      position: "absolute",
+      left: `${pos.x}%`,
+      top: `${pos.y}%`,
+      transform: "translate(-50%, -50%)",
+    };
+  };
 
   return (
     <div
@@ -640,6 +751,7 @@ function PantallaRetornoReceptor({ alSalir }) {
         <div
           style={{
             ...estilosReceptor.reloj,
+            ...posicionar("reloj"),
             fontSize: `clamp(${1.5 * escala}rem, ${4 * escala}vh, ${3 * escala}rem)`,
           }}
         >
@@ -647,38 +759,39 @@ function PantallaRetornoReceptor({ alSalir }) {
         </div>
       )}
 
-      <div style={estilosReceptor.centro}>
-        {(estado.temporizador.activo ||
-          estado.temporizador.restanteAlPausar !== null) && (
-          <div
-            style={{
-              ...estilosReceptor.temporizador,
-              fontSize: `clamp(${4.5 * escala}rem, ${24 * escala}vh, ${16 * escala}rem)`,
-              color: tiempoCumplido ? "#ef4444" : colorAcento,
-              textShadow: `0 0 ${40 * escala}px ${tiempoCumplido ? "#ef444488" : colorAcento + "66"}`,
-            }}
-          >
-            {formatearDuracion(Math.abs(segundosVista))}
-          </div>
-        )}
+      {(estado.temporizador.activo ||
+        estado.temporizador.restanteAlPausar !== null) && (
+        <div
+          style={{
+            ...estilosReceptor.temporizador,
+            ...posicionar("temporizador"),
+            fontSize: `clamp(${4.5 * escala}rem, ${24 * escala}vh, ${16 * escala}rem)`,
+            color: tiempoCumplido ? "#ef4444" : colorAcento,
+            textShadow: `0 0 ${40 * escala}px ${tiempoCumplido ? "#ef444488" : colorAcento + "66"}`,
+          }}
+        >
+          {formatearDuracion(Math.abs(segundosVista))}
+        </div>
+      )}
 
-        {estado.mensaje.visible && estado.mensaje.texto && (
-          <div
-            style={{
-              ...estilosReceptor.mensaje,
-              fontSize: `clamp(${1.8 * escala}rem, ${7 * escala}vh, ${4 * escala}rem)`,
-              color: colorAcento,
-            }}
-          >
-            {estado.mensaje.texto}
-          </div>
-        )}
-      </div>
+      {estado.mensaje.visible && estado.mensaje.texto && (
+        <div
+          style={{
+            ...estilosReceptor.mensaje,
+            ...posicionar("mensaje"),
+            fontSize: `clamp(${1.8 * escala}rem, ${7 * escala}vh, ${4 * escala}rem)`,
+            color: colorAcento,
+          }}
+        >
+          {estado.mensaje.texto}
+        </div>
+      )}
 
       {estado.nota.texto && (
         <div
           style={{
             ...estilosReceptor.nota,
+            ...posicionar("nota"),
             fontSize: `clamp(${1.1 * escala}rem, ${3.5 * escala}vh, ${2 * escala}rem)`,
             color: colorAcento,
           }}
@@ -897,6 +1010,41 @@ const estilosEmisor = {
     fontWeight: "600",
     cursor: "pointer",
   },
+  btnRestablecer: {
+    backgroundColor: "#374151",
+    color: "#d1d5db",
+    border: "none",
+    borderRadius: "6px",
+    padding: "6px 10px",
+    fontSize: "0.75rem",
+    fontWeight: "700",
+    cursor: "pointer",
+  },
+  previewMonitor: {
+    position: "relative",
+    width: "100%",
+    aspectRatio: "16 / 9",
+    backgroundColor: "#000",
+    border: "1px solid #2d303f",
+    borderRadius: "8px",
+    overflow: "hidden",
+    touchAction: "none",
+  },
+  chipArrastrable: {
+    position: "absolute",
+    transform: "translate(-50%, -50%)",
+    backgroundColor: "#1e202b",
+    color: "#fff",
+    border: "2px solid",
+    borderRadius: "8px",
+    padding: "6px 10px",
+    fontSize: "0.72rem",
+    fontWeight: "700",
+    whiteSpace: "nowrap",
+    cursor: "grab",
+    userSelect: "none",
+    touchAction: "none",
+  },
 };
 
 const estilosReceptor = {
@@ -933,44 +1081,25 @@ const estilosReceptor = {
     fontSize: "1rem",
   },
   reloj: {
-    position: "absolute",
-    top: "24px",
-    right: "32px",
-    fontSize: "clamp(1.5rem, 4vh, 3rem)",
     fontWeight: "900",
     fontVariantNumeric: "tabular-nums",
     color: "#9ca3af",
-  },
-  centro: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "24px",
-    textAlign: "center",
+    whiteSpace: "nowrap",
   },
   temporizador: {
-    fontSize: "clamp(4rem, 22vh, 14rem)",
     fontWeight: "900",
     fontVariantNumeric: "tabular-nums",
     lineHeight: 1,
+    whiteSpace: "nowrap",
   },
   mensaje: {
-    fontSize: "clamp(1.5rem, 6vh, 3.5rem)",
     fontWeight: "800",
-    color: "#fbbf24",
-    maxWidth: "90%",
+    maxWidth: "90vw",
     wordBreak: "break-word",
+    textAlign: "center",
   },
   nota: {
-    position: "absolute",
-    bottom: "24px",
-    left: 0,
-    right: 0,
-    textAlign: "center",
-    fontSize: "clamp(1rem, 3vh, 1.8rem)",
     fontWeight: "700",
-    color: "#60a5fa",
+    whiteSpace: "nowrap",
   },
 };

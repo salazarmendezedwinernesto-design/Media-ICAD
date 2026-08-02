@@ -264,6 +264,15 @@ let pantallaRetorno = {
   mensaje: { texto: "", visible: false },
   nota: { texto: "" }, // etiqueta corta de "siguiente", ej. "Después: Ofrenda"
   estilo: { colorAcento: "#f59e0b", tamano: "grande" }, // apariencia del monitor, la decide el Emisor
+  // Posición (en % del ancho/alto, punto = centro del elemento) de cada
+  // elemento dentro del monitor. El Emisor la define arrastrando cada
+  // elemento en su editor de diseño (igual que en ProPresenter/FreeShow/Holyrics).
+  layout: {
+    reloj: { x: 88, y: 10 },
+    temporizador: { x: 50, y: 42 },
+    mensaje: { x: 50, y: 68 },
+    nota: { x: 50, y: 92 },
+  },
   actualizadoPor: null,
   hora: null,
 };
@@ -498,6 +507,9 @@ io.on("connection", (socket) => {
         : {}),
       ...(datos.estilo
         ? { estilo: { ...pantallaRetorno.estilo, ...datos.estilo } }
+        : {}),
+      ...(datos.layout
+        ? { layout: { ...pantallaRetorno.layout, ...datos.layout } }
         : {}),
       actualizadoPor: datos.de || socket.usuario || "Pantalla",
       hora: Date.now(),

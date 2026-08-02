@@ -7,7 +7,7 @@ import { obtenerToken, borrarToken, guardarToken } from "./services/auth";
 // no podía resolver porque Vite no sirve la carpeta src/ como archivos
 // estáticos; por eso el logo nunca se veía en producción.
 import LOGO_URL from "./logo MM.jpeg";
-import { IconOjo, IconOjoTachado } from "./Icons";
+import { IconOjo, IconOjoTachado } from "./icons";
 
 export default function Login({ alIniciarSesion }) {
   const [usuario, setUsuario] = useState("");

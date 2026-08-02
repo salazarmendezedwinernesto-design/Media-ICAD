@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken } from "./services/auth";
-import { IconAlerta, IconEnlace } from "./Icons";
+import { IconAlerta, IconEnlace } from "./icons";
 
 /**
  * Convierte un link de YouTube o Facebook (pegado tal cual por el

@@ -12,7 +12,7 @@ import {
   IconOjo,
   IconAlerta,
   IconEnlace,
-} from "./Icons";
+} from "./icons";
 
 export default function Moderador({ alSalir }) {
   const [desbloqueado, setDesbloqueado] = useState(

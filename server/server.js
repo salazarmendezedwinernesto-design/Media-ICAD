@@ -263,6 +263,7 @@ let pantallaRetorno = {
   },
   mensaje: { texto: "", visible: false },
   nota: { texto: "" }, // etiqueta corta de "siguiente", ej. "Después: Ofrenda"
+  estilo: { colorAcento: "#f59e0b", tamano: "grande" }, // apariencia del monitor, la decide el Emisor
   actualizadoPor: null,
   hora: null,
 };
@@ -494,6 +495,9 @@ io.on("connection", (socket) => {
         : {}),
       ...(datos.nota
         ? { nota: { ...pantallaRetorno.nota, ...datos.nota } }
+        : {}),
+      ...(datos.estilo
+        ? { estilo: { ...pantallaRetorno.estilo, ...datos.estilo } }
         : {}),
       actualizadoPor: datos.de || socket.usuario || "Pantalla",
       hora: Date.now(),

@@ -8,7 +8,7 @@ import Lider from "./Lider"; // Importamos el nuevo panel de líder
 import Moderador from "./Moderador";
 import Login from "./Login";
 import EnlaceExterno from "./EnlaceExterno";
-import { IconEmisora } from "./Icons";
+import { IconEmisora } from "./icons";
 import { obtenerToken, borrarToken } from "./services/auth";
 
 export default function App() {

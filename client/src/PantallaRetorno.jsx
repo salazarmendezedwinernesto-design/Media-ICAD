@@ -35,21 +35,24 @@ const TAMANOS_MONITOR = [
   { id: "extra", etiqueta: "Extra grande" },
 ];
 
-// Posición por defecto de cada elemento dentro del monitor, en PORCENTAJE
-// del ancho/alto (x=0 izquierda, x=100 derecha; y=0 arriba, y=100 abajo).
-// El punto (x,y) es el CENTRO del elemento.
-const DEFAULT_LAYOUT = {
+// Posición FIJA de cada elemento dentro del monitor, en PORCENTAJE del
+// ancho/alto (x=0 izquierda, x=100 derecha; y=0 arriba, y=100 abajo). El
+// punto (x,y) es el CENTRO del elemento. Ya no es editable/arrastrable --
+// es simplemente el layout con el que se dibuja el monitor de escenario.
+const LAYOUT_FIJO = {
   reloj: { x: 88, y: 10 },
   temporizador: { x: 50, y: 42 },
   mensaje: { x: 50, y: 68 },
   nota: { x: 50, y: 92 },
 };
 
-const ELEMENTOS_ARRASTRABLES = [
-  { id: "reloj", etiqueta: "🕒 Reloj" },
-  { id: "temporizador", etiqueta: "⏱️ Cronómetro" },
-  { id: "mensaje", etiqueta: "💬 Mensaje" },
-  { id: "nota", etiqueta: "📌 Nota" },
+// Opciones de aviso: cuántos segundos antes de llegar a 0 el monitor
+// empieza a parpadear para avisar que el tiempo se está acabando.
+const OPCIONES_AVISO = [
+  { segundos: 10, etiqueta: "10 seg" },
+  { segundos: 30, etiqueta: "30 seg" },
+  { segundos: 60, etiqueta: "1 min" },
+  { segundos: 120, etiqueta: "2 min" },
 ];
 
 function formatearReloj(fecha) {
@@ -165,11 +168,11 @@ function PantallaRetornoEmisor({ alSalir }) {
       finEpoch: null,
       inicioEpoch: null,
       restanteAlPausar: null,
+      avisoSegundos: 30,
     },
     mensaje: { texto: "", visible: false },
     nota: { texto: "" },
     estilo: { colorAcento: "#f59e0b", tamano: "grande" },
-    layout: DEFAULT_LAYOUT,
   });
 
   const estadoRef = useRef(estado);
@@ -177,10 +180,8 @@ function PantallaRetornoEmisor({ alSalir }) {
     estadoRef.current = estado;
   }, [estado]);
 
-  const previewRef = useRef(null);
-  const arrastrandoRef = useRef(null);
-
   const [minutosInput, setMinutosInput] = useState(5);
+  const [avisoInput, setAvisoInput] = useState(30);
   const [textoMensaje, setTextoMensaje] = useState("");
   const [textoNota, setTextoNota] = useState("");
   const [segundosVista, setSegundosVista] = useState(0);
@@ -243,8 +244,16 @@ function PantallaRetornoEmisor({ alSalir }) {
         finEpoch: Date.now() + duracionSegundos * 1000,
         inicioEpoch: null,
         restanteAlPausar: null,
+        avisoSegundos: avisoInput,
       },
     });
+  };
+
+  // Permite cambiar el umbral de aviso incluso con el temporizador ya
+  // corriendo, sin reiniciar la cuenta.
+  const cambiarAviso = (segundos) => {
+    setAvisoInput(segundos);
+    enviar({ temporizador: { avisoSegundos: segundos } });
   };
 
   const iniciarCronometro = () => {
@@ -326,45 +335,6 @@ function PantallaRetornoEmisor({ alSalir }) {
     enviar({ estilo: { tamano: id } });
   };
 
-  // ---- Editor de diseño (arrastrar y soltar) ----
-  const layoutActual = estado.layout || DEFAULT_LAYOUT;
-
-  const manejarPointerMove = (e) => {
-    const id = arrastrandoRef.current;
-    if (!id || !previewRef.current) return;
-    const rect = previewRef.current.getBoundingClientRect();
-    let x = ((e.clientX - rect.left) / rect.width) * 100;
-    let y = ((e.clientY - rect.top) / rect.height) * 100;
-    x = Math.min(97, Math.max(3, x));
-    y = Math.min(96, Math.max(4, y));
-    setEstado((prev) => ({
-      ...prev,
-      layout: { ...(prev.layout || DEFAULT_LAYOUT), [id]: { x, y } },
-    }));
-  };
-
-  const manejarPointerUp = () => {
-    const id = arrastrandoRef.current;
-    arrastrandoRef.current = null;
-    window.removeEventListener("pointermove", manejarPointerMove);
-    window.removeEventListener("pointerup", manejarPointerUp);
-    if (id) {
-      enviar({ layout: { [id]: estadoRef.current.layout[id] } });
-    }
-  };
-
-  const iniciarArrastre = (id) => (e) => {
-    e.preventDefault();
-    arrastrandoRef.current = id;
-    window.addEventListener("pointermove", manejarPointerMove);
-    window.addEventListener("pointerup", manejarPointerUp);
-  };
-
-  const restablecerDiseno = () => {
-    setEstado((prev) => ({ ...prev, layout: DEFAULT_LAYOUT }));
-    enviar({ layout: DEFAULT_LAYOUT });
-  };
-
   const temporizadorEnMarcha = estado.temporizador.activo;
   const enPausa =
     !estado.temporizador.activo &&
@@ -413,6 +383,32 @@ function PantallaRetornoEmisor({ alSalir }) {
             temporizadorEnMarcha && (
               <span style={estilosEmisor.avisoTiempo}> ⚠️ TIEMPO CUMPLIDO</span>
             )}
+        </div>
+
+        <div>
+          <span style={estilosEmisor.etiquetaChica}>
+            🚨 Avisar (pantalla parpadea) cuando falten:
+          </span>
+          <div style={estilosEmisor.filaBotonesTemporizador}>
+            {OPCIONES_AVISO.map((op) => (
+              <button
+                key={op.segundos}
+                onClick={() => cambiarAviso(op.segundos)}
+                style={{
+                  ...estilosEmisor.btnAccion,
+                  padding: "8px",
+                  fontSize: "0.8rem",
+                  backgroundColor:
+                    (estado.temporizador.avisoSegundos ?? avisoInput) ===
+                    op.segundos
+                      ? "#dc2626"
+                      : "#374151",
+                }}
+              >
+                {op.etiqueta}
+              </button>
+            ))}
+          </div>
         </div>
 
         {!temporizadorEnMarcha && !enPausa && (
@@ -588,41 +584,6 @@ function PantallaRetornoEmisor({ alSalir }) {
           ))}
         </div>
       </section>
-
-      {/* EDITOR DE DISEÑO (arrastrar y soltar, como Holyrics/ProPresenter/FreeShow) */}
-      <section style={estilosEmisor.tarjeta}>
-        <div style={estilosEmisor.filaTitulo}>
-          <span style={estilosEmisor.tituloTarjeta}>🖱️ EDITOR DE DISEÑO</span>
-          <button
-            style={estilosEmisor.btnRestablecer}
-            onClick={restablecerDiseno}
-          >
-            Restablecer
-          </button>
-        </div>
-        <span style={estilosEmisor.etiquetaChica}>
-          Arrastra cada elemento a donde lo quieras ver en el monitor:
-        </span>
-        <div ref={previewRef} style={estilosEmisor.previewMonitor}>
-          {ELEMENTOS_ARRASTRABLES.map((el) => {
-            const pos = layoutActual[el.id] || DEFAULT_LAYOUT[el.id];
-            return (
-              <div
-                key={el.id}
-                onPointerDown={iniciarArrastre(el.id)}
-                style={{
-                  ...estilosEmisor.chipArrastrable,
-                  left: `${pos.x}%`,
-                  top: `${pos.y}%`,
-                  borderColor: estado.estilo?.colorAcento || "#f59e0b",
-                }}
-              >
-                {el.etiqueta}
-              </div>
-            );
-          })}
-        </div>
-      </section>
     </div>
   );
 }
@@ -702,15 +663,26 @@ function PantallaRetornoReceptor({ alSalir }) {
   const colorAcento = estado.estilo?.colorAcento || "#f59e0b";
   const tamano = estado.estilo?.tamano || "grande";
   const escala = tamano === "extra" ? 1.35 : 1;
-  const layout = estado.layout || DEFAULT_LAYOUT;
+
+  const avisoSegundos = estado.temporizador.avisoSegundos ?? 30;
 
   const tiempoCumplido =
     estado.temporizador.modo === "regresiva" &&
     estado.temporizador.activo &&
     segundosVista <= 0;
 
+  // Últimos segundos antes de llegar a 0: la pantalla empieza a avisar
+  // (parpadeo suave) para que quien está en tarima note el cambio sin
+  // tener que estar mirando fijo el número.
+  const enAlerta =
+    estado.temporizador.modo === "regresiva" &&
+    estado.temporizador.activo &&
+    !tiempoCumplido &&
+    segundosVista > 0 &&
+    segundosVista <= avisoSegundos;
+
   const posicionar = (id) => {
-    const pos = layout[id] || DEFAULT_LAYOUT[id];
+    const pos = LAYOUT_FIJO[id];
     return {
       position: "absolute",
       left: `${pos.x}%`,
@@ -722,9 +694,13 @@ function PantallaRetornoReceptor({ alSalir }) {
   return (
     <div
       ref={contenedorRef}
-      style={estilosReceptor.container}
+      style={{
+        ...estilosReceptor.container,
+        ...(tiempoCumplido ? estilosReceptor.flashCumplido : {}),
+      }}
       onClick={() => setMostrarBarra((v) => !v)}
     >
+      <style>{ESTILOS_ANIMACION}</style>
       {mostrarBarra && (
         <div style={estilosReceptor.barraSuperior}>
           <button
@@ -766,11 +742,31 @@ function PantallaRetornoReceptor({ alSalir }) {
             ...estilosReceptor.temporizador,
             ...posicionar("temporizador"),
             fontSize: `clamp(${4.5 * escala}rem, ${24 * escala}vh, ${16 * escala}rem)`,
-            color: tiempoCumplido ? "#ef4444" : colorAcento,
-            textShadow: `0 0 ${40 * escala}px ${tiempoCumplido ? "#ef444488" : colorAcento + "66"}`,
+            color: tiempoCumplido
+              ? "#ef4444"
+              : enAlerta
+                ? "#f97316"
+                : colorAcento,
+            textShadow: `0 0 ${40 * escala}px ${
+              tiempoCumplido
+                ? "#ef444488"
+                : enAlerta
+                  ? "#f9731688"
+                  : colorAcento + "66"
+            }`,
+            animation: tiempoCumplido
+              ? "retornoParpadeoFuerte 0.6s steps(1) infinite"
+              : enAlerta
+                ? "retornoParpadeoSuave 1s ease-in-out infinite"
+                : "none",
           }}
         >
           {formatearDuracion(Math.abs(segundosVista))}
+          {tiempoCumplido && (
+            <div style={estilosReceptor.avisoCumplidoTexto}>
+              TIEMPO CUMPLIDO
+            </div>
+          )}
         </div>
       )}
 
@@ -802,6 +798,24 @@ function PantallaRetornoReceptor({ alSalir }) {
     </div>
   );
 }
+
+// Animaciones del monitor de escenario (Receptor). Se inyectan con una
+// etiqueta <style> porque los @keyframes no se pueden expresar con
+// estilos en línea de React.
+const ESTILOS_ANIMACION = `
+@keyframes retornoParpadeoSuave {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes retornoParpadeoFuerte {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.15; }
+}
+@keyframes retornoFlashFondo {
+  0%, 100% { background-color: #000; }
+  50% { background-color: #450a0a; }
+}
+`;
 
 const estilosMenu = {
   container: {
@@ -1010,41 +1024,6 @@ const estilosEmisor = {
     fontWeight: "600",
     cursor: "pointer",
   },
-  btnRestablecer: {
-    backgroundColor: "#374151",
-    color: "#d1d5db",
-    border: "none",
-    borderRadius: "6px",
-    padding: "6px 10px",
-    fontSize: "0.75rem",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-  previewMonitor: {
-    position: "relative",
-    width: "100%",
-    aspectRatio: "16 / 9",
-    backgroundColor: "#000",
-    border: "1px solid #2d303f",
-    borderRadius: "8px",
-    overflow: "hidden",
-    touchAction: "none",
-  },
-  chipArrastrable: {
-    position: "absolute",
-    transform: "translate(-50%, -50%)",
-    backgroundColor: "#1e202b",
-    color: "#fff",
-    border: "2px solid",
-    borderRadius: "8px",
-    padding: "6px 10px",
-    fontSize: "0.72rem",
-    fontWeight: "700",
-    whiteSpace: "nowrap",
-    cursor: "grab",
-    userSelect: "none",
-    touchAction: "none",
-  },
 };
 
 const estilosReceptor = {
@@ -1101,5 +1080,14 @@ const estilosReceptor = {
   nota: {
     fontWeight: "700",
     whiteSpace: "nowrap",
+  },
+  flashCumplido: {
+    animation: "retornoFlashFondo 0.6s steps(1) infinite",
+  },
+  avisoCumplidoTexto: {
+    fontSize: "0.22em",
+    fontWeight: "800",
+    letterSpacing: "2px",
+    marginTop: "8px",
   },
 };

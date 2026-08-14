@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
-import SalaAudio from "./SalaAudio";
+import EnlaceReunion from "./EnlaceReunion";
 import BarraTransmision from "./BarraTransmision";
 import EnlaceExterno from "./EnlaceExterno";
 
@@ -64,7 +64,6 @@ const FRASES_RAPIDAS_LIDER = [
 export default function Director({ alSalir }) {
   const [estadosLocales, setEstadosLocales] = useState({});
   const [mensajesCamaras, setMensajesCamaras] = useState({});
-  const [mostrarAudio, setMostrarAudio] = useState(false);
 
   // Guardamos las IDs de los objetivos seleccionados (ej: ["c1", "pastor"])
   const [seleccionados, setSeleccionados] = useState([]);
@@ -379,22 +378,12 @@ export default function Director({ alSalir }) {
           ⬅️ Menú
         </button>
         <h1 style={styles.navTitle}>🎛️ PANEL DEL DIRECTOR</h1>
-        <button style={styles.btnVolver} onClick={() => setMostrarAudio(true)}>
-          🎙️ Audio
-        </button>
+        <div style={{ width: "90px" }} />
       </header>
-
-      {mostrarAudio && (
-        <SalaAudio
-          alSalir={() => setMostrarAudio(false)}
-          esDirector={true}
-          rolEtiqueta="Director"
-          compacta={true}
-        />
-      )}
 
       <BarraTransmision posicion="abajo" variante="compacta" />
       <EnlaceExterno />
+      <EnlaceReunion />
 
       <div
         style={{

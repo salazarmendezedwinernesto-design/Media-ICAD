@@ -31,8 +31,7 @@ const io = new Server(httpServer, {
   // Con los valores por defecto (pingInterval 25s / pingTimeout 20s) el
   // servidor los daba de baja casi apenas se bloqueaba el teléfono. Con
   // esto le damos ~1 minuto de margen antes de considerar la conexión
-  // perdida de verdad (el cliente igual reconecta e re-anuncia solo si
-  // llega a caerse, ver SalaAudio.jsx).
+  // perdida de verdad (el cliente igual reconecta solo si llega a caerse).
   pingInterval: 25000,
   pingTimeout: 60000,
 });
@@ -195,6 +194,21 @@ let enlaceExterno = {
   inicio: null,
 };
 
+// ===== LLAMADA / REUNIÓN (Google Meet) =====
+// El Moderador pega un link de Meet (o cualquier link de videollamada) y
+// este servidor lo reparte a TODOS los paneles conectados (Director,
+// Cámara, Pastor, Líder, Pantalla), que muestran un botón para
+// "Unirse a la llamada". Reemplaza a la antigua sala de audio por
+// WebRTC: aquí no hay señalización ni audio propio, solo se distribuye
+// el link. Se guarda SOLO en memoria: si el Moderador lo quita, o el
+// servidor se reinicia, desaparece por completo.
+let reunionMeet = {
+  activo: false,
+  url: null,
+  publicadoPor: null,
+  inicio: null,
+};
+
 // Bus general de mensajería: lo usan Director, Cámara, Líder y Pantalla
 // para mandarse texto libre entre sí. Valida destinatarios y emite solo a quienes les corresponde.
 function difundirMensajeBus(datos) {
@@ -274,67 +288,6 @@ let pantallaRetorno = {
 // están mirando lo que manda, en vez de mandar "a ciegas".
 const receptoresRetorno = new Set();
 
-// ===== SALAS DE AUDIO (Walkie-Talkie por WebRTC) =====
-// Este servidor NUNCA transporta audio: solo coordina ("signaling") para
-// que los navegadores establezcan conexiones WebRTC directas (P2P) entre
-// sí, lo cual mantiene la latencia al mínimo posible. Disponible desde
-// TODOS los paneles (Director, Cámara, Pastor, Líder, Pantalla).
-//
-// salasAudio[sala] = { [socketId]: { nombre, rol } }
-// liveAudio[sala]  = socketId marcado "en vivo" por el Director, o null
-const SALAS_DISPONIBLES = ["1", "2", "3", "4", "5"];
-const salasAudio = {};
-const liveAudio = {};
-SALAS_DISPONIBLES.forEach((s) => {
-  salasAudio[s] = {};
-  liveAudio[s] = null;
-});
-
-function listaSala(sala) {
-  return Object.entries(salasAudio[sala] || {}).map(([socketId, info]) => ({
-    socketId,
-    nombre: info.nombre,
-    rol: info.rol,
-  }));
-}
-
-// Saca a un socket de cualquier sala de audio en la que estuviera
-// (se usa al cambiar de sala, al salir explícitamente, o al desconectar).
-function salirDeSalaAudio(socket) {
-  const sala = socket.data?.salaAudio;
-  if (!sala || !salasAudio[sala]) return;
-
-  delete salasAudio[sala][socket.id];
-  socket.leave(`audio:${sala}`);
-
-  // Si quien se va era el marcado "en vivo", se limpia ese estado.
-  if (liveAudio[sala] === socket.id) {
-    liveAudio[sala] = null;
-    io.to(`audio:${sala}`).emit("audio:live_actualizado", {
-      sala,
-      liveSocketId: null,
-    });
-  }
-
-  // Avisar a los que quedan que este participante se fue, para que
-  // cierren su conexión WebRTC con él.
-  io.to(`audio:${sala}`).emit("audio:participante_salio", {
-    socketId: socket.id,
-  });
-
-  // Y mandarles también la lista actualizada de la sala (sin esta
-  // persona). Antes esto no se hacía al salir —solo al entrar— y por
-  // eso el nombre se quedaba pegado en la lista de los demás para
-  // siempre, aunque ya se hubiera ido.
-  io.to(`audio:${sala}`).emit("audio:lista_sala", {
-    sala,
-    miembros: listaSala(sala),
-  });
-
-  socket.data.salaAudio = null;
-  socket.data.nombreAudio = null;
-}
-
 io.on("connection", (socket) => {
   console.log(`Cliente conectado: ${socket.id} (usuario: ${socket.usuario})`);
 
@@ -352,6 +305,10 @@ io.on("connection", (socket) => {
   // Y el estado actual del enlace externo (YouTube/Facebook), por si el
   // Moderador ya lo había publicado antes de que este cliente entrara.
   socket.emit("enlace:estado", enlaceExterno);
+
+  // Y el estado actual de la llamada/reunión (Meet), por si el Moderador
+  // ya la había publicado antes de que este cliente entrara.
+  socket.emit("reunion:estado", reunionMeet);
 
   // Y el estado actual de la Pantalla de Retorno, para que un Receptor
   // que se conecta tarde (o recarga la página) vea de inmediato lo que
@@ -486,6 +443,33 @@ io.on("connection", (socket) => {
     io.emit("enlace:estado", enlaceExterno);
   });
 
+  // ===== LLAMADA / REUNIÓN (Google Meet) =====
+
+  // --- Moderador -> Todos: publica el link de la videollamada ---
+  // datos: { url, de }
+  socket.on("reunion:publicar", (datos) => {
+    if (!datos || !datos.url) return;
+    reunionMeet = {
+      activo: true,
+      url: String(datos.url).trim(),
+      publicadoPor: datos.de || socket.usuario || "Moderador",
+      inicio: Date.now(),
+    };
+    io.emit("reunion:estado", reunionMeet);
+  });
+
+  // --- Moderador -> Todos: quita el link de la videollamada ---
+  // Se BORRA por completo (nada queda guardado), igual que el enlace externo.
+  socket.on("reunion:quitar", () => {
+    reunionMeet = {
+      activo: false,
+      url: null,
+      publicadoPor: null,
+      inicio: null,
+    };
+    io.emit("reunion:estado", reunionMeet);
+  });
+
   // ===== PANTALLA DE RETORNO (confidence monitor) =====
   // El Emisor (operador) manda el estado COMPLETO que quiere mostrar; el
   // servidor lo guarda tal cual y lo reparte a todos (incluido el propio
@@ -524,90 +508,8 @@ io.on("connection", (socket) => {
     io.emit("retorno:estado", pantallaRetorno);
   });
 
-  // ===== EVENTOS DE SALA DE AUDIO =====
-
-  // Unirse a una sala (1-5). Si ya estaba en otra, primero sale de esa.
-  // datos: { sala: "1".."5", nombre: "Gaby", rol: "Camara 1" | "Pastor" | ... }
-  socket.on("audio:unirse", (datos) => {
-    if (!datos || !datos.sala || !datos.nombre) return;
-    const sala = String(datos.sala);
-    if (!SALAS_DISPONIBLES.includes(sala)) return;
-
-    const nombre = String(datos.nombre).trim().slice(0, 24) || "Sin nombre";
-    const rol = String(datos.rol || "Invitado")
-      .trim()
-      .slice(0, 30);
-
-    // Si ya estaba en otra sala de audio (o la misma), primero se retira.
-    salirDeSalaAudio(socket);
-
-    socket.data.salaAudio = sala;
-    socket.data.nombreAudio = nombre;
-    socket.join(`audio:${sala}`);
-    salasAudio[sala][socket.id] = { nombre, rol };
-
-    // Avisamos a los que YA estaban en la sala que llegó alguien nuevo,
-    // para que cada uno inicie una conexión WebRTC con el recién llegado.
-    socket.to(`audio:${sala}`).emit("audio:nuevo_participante", {
-      socketId: socket.id,
-      nombre,
-      rol,
-    });
-
-    // Al recién llegado le mandamos la lista completa de quienes ya
-    // estaban, para que sepa con quién debe negociar conexión WebRTC.
-    socket.emit("audio:estado_sala", {
-      sala,
-      socketId: socket.id,
-      participantes: listaSala(sala).filter((m) => m.socketId !== socket.id),
-      liveSocketId: liveAudio[sala],
-    });
-
-    // El resto de la sala recibe la lista actualizada (para pintar nombres).
-    io.to(`audio:${sala}`).emit("audio:lista_sala", {
-      sala,
-      miembros: listaSala(sala),
-    });
-  });
-
-  // Salir explícitamente de la sala (botón "Salir" en el panel de audio).
-  socket.on("audio:salir", () => {
-    salirDeSalaAudio(socket);
-  });
-
-  // --- Señalización WebRTC (relay puro; el audio nunca pasa por aquí) ---
-  // datos: { paraSocketId, tipo: "oferta"|"respuesta"|"ice", payload }
-  socket.on("audio:senal", (datos) => {
-    if (!datos || !datos.paraSocketId || !datos.tipo) return;
-    io.to(datos.paraSocketId).emit("audio:senal", {
-      deSocketId: socket.id,
-      tipo: datos.tipo,
-      payload: datos.payload,
-    });
-  });
-
-  // --- Tally de audio (verde/rojo por persona, dentro de una sala) ---
-  // Control del Director: marca a UNA persona como "en vivo" dentro de
-  // su sala; al marcar a otra, la anterior pasa a rojo automáticamente.
-  // socketId null = nadie en vivo (todos en rojo).
-  socket.on("audio:marcar_live", (datos) => {
-    if (!datos || !datos.sala) return;
-    const sala = String(datos.sala);
-    if (!SALAS_DISPONIBLES.includes(sala)) return;
-
-    const socketId = datos.socketId || null;
-    if (socketId && !salasAudio[sala][socketId]) return; // ya no está en la sala
-
-    liveAudio[sala] = socketId;
-    io.to(`audio:${sala}`).emit("audio:live_actualizado", {
-      sala,
-      liveSocketId: socketId,
-    });
-  });
-
   socket.on("disconnect", (motivo) => {
     console.log(`Cliente desconectado: ${socket.id} (${motivo})`);
-    salirDeSalaAudio(socket);
     if (receptoresRetorno.delete(socket.id)) {
       io.emit("retorno:conteoReceptores", receptoresRetorno.size);
     }

@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
-import SalaAudio from "./SalaAudio";
 import BarraTransmision from "./BarraTransmision";
 import EnlaceExterno from "./EnlaceExterno";
+import EnlaceReunion from "./EnlaceReunion";
 
 const SOCKET_URL = SERVER_URL;
 const DESTINATARIOS_PANTALLA = ["Director", "Pastor", "Lider"];
@@ -24,7 +24,6 @@ export default function Pantalla({ alSalir }) {
   const [mensajesRecibidos, setMensajesRecibidos] = useState([]);
   const [confirmacion, setConfirmacion] = useState("");
   const [permitirParpadeo, setPermitirParpadeo] = useState(true);
-  const [mostrarAudio, setMostrarAudio] = useState(false);
 
   const socketRef = useRef(null);
   const temporizadorParpadeoRef = useRef(null);
@@ -152,19 +151,8 @@ export default function Pantalla({ alSalir }) {
           ⬅️ Menú
         </button>
         <h1 style={styles.navTitle}>📺 OPERADOR DE PANTALLA</h1>
-        <button style={styles.btnVolver} onClick={() => setMostrarAudio(true)}>
-          🎙️ Audio
-        </button>
+        <div style={{ width: "90px" }} />
       </header>
-
-      {mostrarAudio && (
-        <SalaAudio
-          alSalir={() => setMostrarAudio(false)}
-          esDirector={false}
-          rolEtiqueta="Pantalla"
-          compacta={true}
-        />
-      )}
 
       <BarraTransmision
         posicion="arriba"
@@ -172,6 +160,7 @@ export default function Pantalla({ alSalir }) {
         mostrarBotonPresentar={true}
       />
       <EnlaceExterno />
+      <EnlaceReunion />
 
       {/* PANTALLA PRINCIPAL DE AVISOS RECIBIDOS */}
       <section

@@ -12,6 +12,7 @@ import {
   IconOjo,
   IconAlerta,
   IconEnlace,
+  IconCamara,
 } from "./icons";
 
 export default function Moderador({ alSalir }) {
@@ -25,6 +26,10 @@ export default function Moderador({ alSalir }) {
   const [enlace, setEnlace] = useState({ activo: false, url: null });
   const [campoUrl, setCampoUrl] = useState("");
   const [errorUrl, setErrorUrl] = useState("");
+
+  const [reunion, setReunion] = useState({ activo: false, url: null });
+  const [campoReunion, setCampoReunion] = useState("");
+  const [errorReunion, setErrorReunion] = useState("");
 
   const socketRef = useRef(null);
 
@@ -71,6 +76,10 @@ export default function Moderador({ alSalir }) {
       if (datos) setEnlace(datos);
     });
 
+    socket.on("reunion:estado", (datos) => {
+      if (datos) setReunion(datos);
+    });
+
     return () => socket.disconnect();
   }, [desbloqueado]);
 
@@ -96,6 +105,29 @@ export default function Moderador({ alSalir }) {
 
   const quitarEnlace = () => {
     socketRef.current?.emit("enlace:quitar");
+  };
+
+  const publicarReunion = (e) => {
+    e.preventDefault();
+    setErrorReunion("");
+
+    const url = campoReunion.trim();
+    if (!url || !/^https?:\/\//i.test(url)) {
+      setErrorReunion(
+        "Pega un link completo (debe empezar con https://), por ejemplo el de Google Meet.",
+      );
+      return;
+    }
+
+    socketRef.current?.emit("reunion:publicar", {
+      url,
+      de: "Moderador",
+    });
+    setCampoReunion("");
+  };
+
+  const quitarReunion = () => {
+    socketRef.current?.emit("reunion:quitar");
   };
 
   if (!desbloqueado) {
@@ -288,6 +320,87 @@ export default function Moderador({ alSalir }) {
           </p>
         </section>
       )}
+
+      <section style={styles.tarjeta}>
+        <span
+          style={{
+            ...styles.tituloSeccion,
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+          }}
+        >
+          {reunion.activo ? (
+            <>
+              <IconCamara size={14} color="#16a34a" /> LLAMADA ACTIVA EN TODOS
+              LOS PANELES
+            </>
+          ) : (
+            "SIN LLAMADA ACTIVA"
+          )}
+        </span>
+        <p style={styles.notaAyuda}>
+          Pega aquí el link de la videollamada de Google Meet y aparecerá un
+          botón de "Unirse a la llamada" en Director, Cámaras, Pastor, Líder y
+          Pantalla. Cuando termine la llamada, quítalo y desaparece solo en
+          todos lados — no queda nada guardado.
+        </p>
+
+        <form onSubmit={publicarReunion} style={styles.formulario}>
+          <input
+            type="text"
+            value={campoReunion}
+            onChange={(e) => setCampoReunion(e.target.value)}
+            placeholder="Pega aquí el link de Google Meet..."
+            style={styles.input}
+          />
+          {errorReunion && (
+            <p style={{ color: "#f87171", fontSize: "0.85rem", margin: 0 }}>
+              {errorReunion}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={!campoReunion.trim()}
+            style={{
+              ...styles.btnPrimario,
+              backgroundColor: "#16a34a",
+              opacity: !campoReunion.trim() ? 0.4 : 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+            }}
+          >
+            <IconCamara size={16} /> Publicar en todos los paneles
+          </button>
+        </form>
+
+        {reunion.activo && (
+          <>
+            <a
+              href={reunion.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={styles.enlaceRespaldo}
+            >
+              <IconEnlace size={14} /> Abrir la llamada en una pestaña nueva
+            </a>
+            <button
+              style={{
+                ...styles.btnQuitar,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+              }}
+              onClick={quitarReunion}
+            >
+              <IconX size={16} /> Quitar link de todos los paneles
+            </button>
+          </>
+        )}
+      </section>
     </div>
   );
 }

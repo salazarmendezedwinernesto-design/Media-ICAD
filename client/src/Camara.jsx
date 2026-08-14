@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
-import SalaAudio from "./SalaAudio";
 import BarraTransmision from "./BarraTransmision";
 import EnlaceExterno from "./EnlaceExterno";
+import EnlaceReunion from "./EnlaceReunion";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -24,7 +24,6 @@ export default function Camara({ numero, alSalir }) {
   const [textoLibre, setTextoLibre] = useState("");
   const [confirmacion, setConfirmacion] = useState("");
   const [responderA, setResponderA] = useState("Director"); // Destinatario por defecto
-  const [mostrarAudio, setMostrarAudio] = useState(false);
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -134,26 +133,15 @@ export default function Camara({ numero, alSalir }) {
       <div style={styles.headerArea}>
         <div style={styles.confirmacionEnvio}>{confirmacion}</div>
         <div style={{ display: "flex", gap: "8px" }}>
-          <button style={styles.btnSalir} onClick={() => setMostrarAudio(true)}>
-            🎙️ Audio
-          </button>
           <button style={styles.btnSalir} onClick={alSalir}>
             ✕ SALIR
           </button>
         </div>
       </div>
 
-      {mostrarAudio && (
-        <SalaAudio
-          alSalir={() => setMostrarAudio(false)}
-          esDirector={false}
-          rolEtiqueta={`Cámara ${numero}`}
-          compacta={true}
-        />
-      )}
-
       <BarraTransmision posicion="abajo" variante="compacta" />
       <EnlaceExterno />
+      <EnlaceReunion />
 
       <div style={styles.mainTallyArea}>
         <h1 style={styles.camLabel}>CAM {numero}</h1>

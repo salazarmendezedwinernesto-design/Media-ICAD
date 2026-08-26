@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { SERVER_URL, MEDIAMTX_WHEP_URL } from "./config";
+import {
+  SERVER_URL,
+  MEDIAMTX_WHEP_URL,
+  MEDIAMTX_RTMP_URL,
+  MEDIAMTX_STREAM_KEY,
+} from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
-import LiveStream from "./LiveStream";
+import MonitorRetorno from "./MonitorRetorno";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -35,17 +40,6 @@ const TAMANOS_MONITOR = [
   { id: "grande", etiqueta: "Grande" },
   { id: "extra", etiqueta: "Extra grande" },
 ];
-
-// Posición FIJA de cada elemento dentro del monitor, en PORCENTAJE del
-// ancho/alto (x=0 izquierda, x=100 derecha; y=0 arriba, y=100 abajo). El
-// punto (x,y) es el CENTRO del elemento. Ya no es editable/arrastrable --
-// es simplemente el layout con el que se dibuja el monitor de escenario.
-const LAYOUT_FIJO = {
-  reloj: { x: 88, y: 10 },
-  temporizador: { x: 50, y: 42 },
-  mensaje: { x: 50, y: 68 },
-  nota: { x: 50, y: 92 },
-};
 
 // Opciones de aviso: cuántos segundos antes de llegar a 0 el monitor
 // empieza a parpadear para avisar que el tiempo se está acabando.
@@ -159,6 +153,35 @@ export default function PantallaRetorno({ alSalir }) {
 // ===================== EMISOR =====================
 // Panel de control: el operador decide qué se muestra en el/los monitores
 // de escenario. Todo lo que aquí se manda es texto libre escrito a mano.
+// Campo de solo lectura con botón de copiar, para los datos de conexión
+// de OBS (servidor RTMP y clave de transmisión).
+function CampoCopiable({ etiqueta, valor }) {
+  const [copiado, setCopiado] = useState(false);
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(valor);
+    } catch {
+      // Si el navegador bloquea el portapapeles (ej. http sin TLS), el
+      // usuario igual puede seleccionar y copiar el texto a mano.
+    }
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 1500);
+  };
+
+  return (
+    <div style={estilosEmisor.campoCopiable}>
+      <span style={estilosEmisor.campoCopiableEtiqueta}>{etiqueta}</span>
+      <div style={estilosEmisor.campoCopiableFila}>
+        <code style={estilosEmisor.campoCopiableValor}>{valor}</code>
+        <button style={estilosEmisor.btnCopiar} onClick={copiar}>
+          {copiado ? "✅" : "📋"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PantallaRetornoEmisor({ alSalir }) {
   const socketRef = useRef(null);
 
@@ -372,26 +395,6 @@ function PantallaRetornoEmisor({ alSalir }) {
     segundosVista > 0 &&
     segundosVista <= avisoSegundosPreview;
 
-  const posicionarPreview = (id) => {
-    const pos = LAYOUT_FIJO[id];
-    if (id === "reloj") {
-      return {
-        position: "absolute",
-        right: "3%",
-        top: `${pos.y}%`,
-        transform: "translateY(-50%)",
-      };
-    }
-    return {
-      position: "absolute",
-      left: `${pos.x}%`,
-      top: `${pos.y}%`,
-      transform: "translate(-50%, -50%)",
-    };
-  };
-
-  const colorAcentoPreview = estado.estilo?.colorAcento || "#f59e0b";
-
   return (
     <div style={estilosEmisor.container}>
       <style>{ESTILOS_ANIMACION}</style>
@@ -442,70 +445,41 @@ function PantallaRetornoEmisor({ alSalir }) {
               👁️ VISTA PREVIA DEL MONITOR
             </span>
             <div style={estilosEmisor.cajaPreview}>
-              {/* Señal en vivo (OBS -> MediaMTX -> WHEP) de fondo, detrás
-                  de los overlays de reloj/temporizador/mensaje/nota. */}
-              <LiveStream whepUrl={MEDIAMTX_WHEP_URL} alto="100%" />
-
-              {estado.reloj.visible && (
-                <div
-                  style={{
-                    ...estilosEmisor.previewReloj,
-                    ...posicionarPreview("reloj"),
-                  }}
-                >
-                  {formatearReloj(horaActualPreview)}
-                </div>
-              )}
-
-              {(estado.temporizador.activo ||
-                estado.temporizador.restanteAlPausar !== null) && (
-                <div
-                  style={{
-                    ...estilosEmisor.previewTemporizador,
-                    ...posicionarPreview("temporizador"),
-                    color: tiempoCumplidoPreview
-                      ? "#ef4444"
-                      : enAlertaPreview
-                        ? "#f97316"
-                        : colorAcentoPreview,
-                    animation: tiempoCumplidoPreview
-                      ? "retornoParpadeoFuerte 0.6s steps(1) infinite"
-                      : enAlertaPreview
-                        ? "retornoParpadeoSuave 1s ease-in-out infinite"
-                        : "none",
-                  }}
-                >
-                  {formatearDuracion(Math.abs(segundosVista))}
-                </div>
-              )}
-
-              {estado.mensaje.visible && estado.mensaje.texto && (
-                <div
-                  style={{
-                    ...estilosEmisor.previewMensaje,
-                    ...posicionarPreview("mensaje"),
-                    color: colorAcentoPreview,
-                  }}
-                >
-                  {estado.mensaje.texto}
-                </div>
-              )}
-
-              {estado.nota.texto && (
-                <div
-                  style={{
-                    ...estilosEmisor.previewNota,
-                    ...posicionarPreview("nota"),
-                    color: colorAcentoPreview,
-                  }}
-                >
-                  {estado.nota.texto}
-                </div>
-              )}
+              <MonitorRetorno
+                estado={estado}
+                horaActual={horaActualPreview}
+                segundosVista={segundosVista}
+                tiempoCumplido={tiempoCumplidoPreview}
+                enAlerta={enAlertaPreview}
+                whepUrl={MEDIAMTX_WHEP_URL}
+                modoPreview
+              />
             </div>
             <span style={estilosEmisor.etiquetaChica}>
               Así se ve ahora mismo en el monitor real.
             </span>
+          </section>
+
+          {/* CONEXIÓN CON OBS */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>
+              🔌 CONEXIÓN CON OBS STUDIO
+            </span>
+            <span style={estilosEmisor.etiquetaChica}>
+              Configura esto en OBS → Configuración → Emisión → Servicio
+              personalizado. En cuanto OBS empiece a transmitir, la señal
+              aparece automáticamente arriba y en todos los monitores de
+              escenario (Receptores).
+            </span>
+
+            <CampoCopiable
+              etiqueta="Servidor (RTMP)"
+              valor={MEDIAMTX_RTMP_URL}
+            />
+            <CampoCopiable
+              etiqueta="Clave de transmisión"
+              valor={MEDIAMTX_STREAM_KEY}
+            />
           </section>
         </aside>
 
@@ -891,10 +865,6 @@ function PantallaRetornoReceptor({ alSalir }) {
     );
   }
 
-  const colorAcento = estado.estilo?.colorAcento || "#f59e0b";
-  const tamano = estado.estilo?.tamano || "grande";
-  const escala = tamano === "extra" ? 1.35 : 1;
-
   const avisoSegundos = estado.temporizador.avisoSegundos ?? 30;
 
   const tiempoCumplido =
@@ -912,28 +882,6 @@ function PantallaRetornoReceptor({ alSalir }) {
     segundosVista > 0 &&
     segundosVista <= avisoSegundos;
 
-  const posicionar = (id) => {
-    const pos = LAYOUT_FIJO[id];
-    // El reloj se ancla por su borde DERECHO (en vez de centrado) para
-    // que, si el texto "08:45:10 PM" es más ancho que en formato 24h, en
-    // vez de salirse de la pantalla por la derecha simplemente crezca
-    // hacia la izquierda.
-    if (id === "reloj") {
-      return {
-        position: "absolute",
-        right: "3%",
-        top: `${pos.y}%`,
-        transform: "translateY(-50%)",
-      };
-    }
-    return {
-      position: "absolute",
-      left: `${pos.x}%`,
-      top: `${pos.y}%`,
-      transform: "translate(-50%, -50%)",
-    };
-  };
-
   return (
     <div
       ref={contenedorRef}
@@ -945,11 +893,14 @@ function PantallaRetornoReceptor({ alSalir }) {
     >
       <style>{ESTILOS_ANIMACION}</style>
 
-      {/* Señal en vivo (OBS -> MediaMTX -> WHEP) de fondo, a pantalla
-          completa, detrás del reloj/temporizador/mensaje/nota. */}
-      <div style={estilosReceptor.fondoVideo}>
-        <LiveStream whepUrl={MEDIAMTX_WHEP_URL} alto="100%" />
-      </div>
+      <MonitorRetorno
+        estado={estado}
+        horaActual={horaActual}
+        segundosVista={segundosVista}
+        tiempoCumplido={tiempoCumplido}
+        enAlerta={enAlerta}
+        whepUrl={MEDIAMTX_WHEP_URL}
+      />
 
       {/* Indicador discreto de conexión: verde = conectado al servidor,
           rojo parpadeante = se perdió la conexión (ej. wifi cortado o
@@ -988,77 +939,8 @@ function PantallaRetornoReceptor({ alSalir }) {
         </div>
       )}
 
-      {estado.reloj.visible && (
-        <div
-          style={{
-            ...estilosReceptor.reloj,
-            ...posicionar("reloj"),
-            fontSize: `clamp(${1.6 * escala}rem, min(${6 * escala}vh, ${9 * escala}vw), ${4.5 * escala}rem)`,
-          }}
-        >
-          {formatearReloj(horaActual)}
-        </div>
-      )}
-
-      {(estado.temporizador.activo ||
-        estado.temporizador.restanteAlPausar !== null) && (
-        <div
-          style={{
-            ...estilosReceptor.temporizador,
-            ...posicionar("temporizador"),
-            fontSize: `clamp(${4.5 * escala}rem, ${24 * escala}vh, ${16 * escala}rem)`,
-            color: tiempoCumplido
-              ? "#ef4444"
-              : enAlerta
-                ? "#f97316"
-                : colorAcento,
-            textShadow: `0 0 ${40 * escala}px ${
-              tiempoCumplido
-                ? "#ef444488"
-                : enAlerta
-                  ? "#f9731688"
-                  : colorAcento + "66"
-            }`,
-            animation: tiempoCumplido
-              ? "retornoParpadeoFuerte 0.6s steps(1) infinite"
-              : enAlerta
-                ? "retornoParpadeoSuave 1s ease-in-out infinite"
-                : "none",
-          }}
-        >
-          {formatearDuracion(Math.abs(segundosVista))}
-          {tiempoCumplido && (
-            <div style={estilosReceptor.avisoCumplidoTexto}>
-              TIEMPO CUMPLIDO
-            </div>
-          )}
-        </div>
-      )}
-
-      {estado.mensaje.visible && estado.mensaje.texto && (
-        <div
-          style={{
-            ...estilosReceptor.mensaje,
-            ...posicionar("mensaje"),
-            fontSize: `clamp(${1.8 * escala}rem, ${7 * escala}vh, ${4 * escala}rem)`,
-            color: colorAcento,
-          }}
-        >
-          {estado.mensaje.texto}
-        </div>
-      )}
-
-      {estado.nota.texto && (
-        <div
-          style={{
-            ...estilosReceptor.nota,
-            ...posicionar("nota"),
-            fontSize: `clamp(${1.1 * escala}rem, ${3.5 * escala}vh, ${2 * escala}rem)`,
-            color: colorAcento,
-          }}
-        >
-          {estado.nota.texto}
-        </div>
+      {tiempoCumplido && (
+        <div style={estilosReceptor.avisoCumplidoTexto}>TIEMPO CUMPLIDO</div>
       )}
     </div>
   );
@@ -1240,36 +1122,6 @@ const estilosEmisor = {
     overflow: "hidden",
     containerType: "size",
   },
-  previewReloj: {
-    position: "absolute",
-    fontWeight: "900",
-    fontVariantNumeric: "tabular-nums",
-    color: "#9ca3af",
-    whiteSpace: "nowrap",
-    fontSize: "6cqh",
-  },
-  previewTemporizador: {
-    position: "absolute",
-    fontWeight: "900",
-    fontVariantNumeric: "tabular-nums",
-    lineHeight: 1,
-    whiteSpace: "nowrap",
-    fontSize: "20cqh",
-  },
-  previewMensaje: {
-    position: "absolute",
-    fontWeight: "800",
-    maxWidth: "90%",
-    textAlign: "center",
-    wordBreak: "break-word",
-    fontSize: "6cqh",
-  },
-  previewNota: {
-    position: "absolute",
-    fontWeight: "700",
-    whiteSpace: "nowrap",
-    fontSize: "3.2cqh",
-  },
   tarjeta: {
     backgroundColor: "#11121a",
     borderRadius: "12px",
@@ -1308,6 +1160,43 @@ const estilosEmisor = {
   avisoTiempo: { fontSize: "0.9rem", color: "#ef4444", display: "block" },
   filaInputMinutos: { display: "flex", gap: "8px", alignItems: "center" },
   etiquetaChica: { fontSize: "0.8rem", color: "#9ca3af" },
+  campoCopiable: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  campoCopiableEtiqueta: {
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    color: "#9ca3af",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+  campoCopiableFila: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  campoCopiableValor: {
+    flex: 1,
+    backgroundColor: "#0b0c10",
+    border: "1px solid #2d303f",
+    borderRadius: "6px",
+    color: "#67e8f9",
+    padding: "8px 10px",
+    fontSize: "0.85rem",
+    overflowX: "auto",
+    whiteSpace: "nowrap",
+  },
+  btnCopiar: {
+    flexShrink: 0,
+    backgroundColor: "#1f2430",
+    border: "1px solid #2d303f",
+    borderRadius: "6px",
+    padding: "8px 10px",
+    cursor: "pointer",
+    fontSize: "0.9rem",
+  },
   inputMinutos: {
     width: "70px",
     backgroundColor: "#0b0c10",
@@ -1382,11 +1271,6 @@ const estilosReceptor = {
     position: "relative",
     cursor: "pointer",
   },
-  fondoVideo: {
-    position: "absolute",
-    inset: 0,
-    zIndex: 0,
-  },
   barraSuperior: {
     position: "absolute",
     top: "16px",
@@ -1432,10 +1316,16 @@ const estilosReceptor = {
     animation: "retornoFlashFondo 0.6s steps(1) infinite",
   },
   avisoCumplidoTexto: {
-    fontSize: "0.22em",
+    position: "absolute",
+    bottom: "24px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    color: "#ef4444",
+    fontSize: "1.4rem",
     fontWeight: "800",
     letterSpacing: "2px",
-    marginTop: "8px",
+    animation: "retornoParpadeoFuerte 0.6s steps(1) infinite",
+    zIndex: 3,
   },
   puntoConexion: {
     position: "absolute",

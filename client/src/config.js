@@ -13,7 +13,7 @@ export const SERVER_URL = "https://crew-media.onrender.com";
 // "quick tunnel" gratis, porque la URL cambia sola (ver LEEME.md si
 // quieres automatizarlo). Formato: https://TU-TUNEL.trycloudflare.com/<CLAVE>/whep
 export const MEDIAMTX_WHEP_URL =
-  "https://atmosphere-sensors-das-miniature.trycloudflare.com/canaan2026/whep";
+  "https://voices-sticky-commitments-warning.trycloudflare.com/canaan2026/whep";
 
 // Lo que el Moderador configura en OBS Studio / vMix. OJO: esto usa la
 // direccion LOCAL (127.0.0.1), no el túnel -- OBS y MediaMTX corren en la

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { SERVER_URL } from "./config";
+import { SERVER_URL, MEDIAMTX_WHEP_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
+import LiveStream from "./LiveStream";
 
 const SOCKET_URL = SERVER_URL;
 
@@ -441,6 +442,10 @@ function PantallaRetornoEmisor({ alSalir }) {
               👁️ VISTA PREVIA DEL MONITOR
             </span>
             <div style={estilosEmisor.cajaPreview}>
+              {/* Señal en vivo (OBS -> MediaMTX -> WHEP) de fondo, detrás
+                  de los overlays de reloj/temporizador/mensaje/nota. */}
+              <LiveStream whepUrl={MEDIAMTX_WHEP_URL} alto="100%" />
+
               {estado.reloj.visible && (
                 <div
                   style={{
@@ -940,6 +945,12 @@ function PantallaRetornoReceptor({ alSalir }) {
     >
       <style>{ESTILOS_ANIMACION}</style>
 
+      {/* Señal en vivo (OBS -> MediaMTX -> WHEP) de fondo, a pantalla
+          completa, detrás del reloj/temporizador/mensaje/nota. */}
+      <div style={estilosReceptor.fondoVideo}>
+        <LiveStream whepUrl={MEDIAMTX_WHEP_URL} alto="100%" />
+      </div>
+
       {/* Indicador discreto de conexión: verde = conectado al servidor,
           rojo parpadeante = se perdió la conexión (ej. wifi cortado o
           Render dormido). Se queda visible aunque se oculte la barra de
@@ -1370,6 +1381,11 @@ const estilosReceptor = {
     boxSizing: "border-box",
     position: "relative",
     cursor: "pointer",
+  },
+  fondoVideo: {
+    position: "absolute",
+    inset: 0,
+    zIndex: 0,
   },
   barraSuperior: {
     position: "absolute",

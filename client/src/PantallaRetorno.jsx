@@ -32,18 +32,6 @@ function guardarPresetsEnDisco(lista) {
 
 const SOCKET_URL = SERVER_URL;
 
-// Frases rápidas para la "nota de siguiente". Son solo sugerencias de
-// texto libre para el operador -- NUNCA incluyen versículos ni letras de
-// alabanza, por decisión explícita del ministerio.
-const NOTAS_RAPIDAS = [
-  "Después: Ofrenda",
-  "Después: Bienvenida",
-  "Después: Anuncios",
-  "Después: Oración",
-  "Cambio de predicador",
-  "Últimos 5 minutos",
-];
-
 // Paleta de colores de acento para el monitor de escenario. Colores
 // saturados y de alto contraste sobre fondo negro, pensados para verse
 // bien de lejos bajo luces de escenario.
@@ -204,7 +192,6 @@ function PantallaRetornoEmisor({ alSalir }) {
   const [minutosInput, setMinutosInput] = useState(5);
   const [avisoInput, setAvisoInput] = useState(30);
   const [textoMensaje, setTextoMensaje] = useState("");
-  const [textoNota, setTextoNota] = useState("");
   const [segundosVista, setSegundosVista] = useState(0);
   const [confirmacion, setConfirmacion] = useState("");
   const [conectado, setConectado] = useState(true);
@@ -368,11 +355,6 @@ function PantallaRetornoEmisor({ alSalir }) {
   const ocultarMensaje = () => {
     setTextoMensaje("");
     enviar({ mensaje: { texto: "", visible: false } });
-  };
-
-  const enviarNota = (texto) => {
-    setTextoNota(texto);
-    enviar({ nota: { texto } });
   };
 
   const cambiarColor = (valor) => {
@@ -721,53 +703,6 @@ function PantallaRetornoEmisor({ alSalir }) {
                 </button>
               </div>
             </form>
-          </section>
-
-          {/* NOTA DE SIGUIENTE */}
-          <section style={estilosEmisor.tarjeta}>
-            <span style={estilosEmisor.tituloTarjeta}>
-              📌 NOTA (SIGUIENTE / AVISO CORTO)
-            </span>
-            <div style={estilosEmisor.gridNotasRapidas}>
-              {NOTAS_RAPIDAS.map((n) => (
-                <button
-                  key={n}
-                  style={{
-                    ...estilosEmisor.btnNotaRapida,
-                    borderColor: textoNota === n ? "#3b82f6" : "#2d303f",
-                  }}
-                  onClick={() => enviarNota(n)}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-            <div style={estilosEmisor.formMensaje}>
-              <input
-                type="text"
-                value={textoNota}
-                onChange={(e) => setTextoNota(e.target.value)}
-                placeholder="Escribe una nota personalizada..."
-                style={estilosEmisor.inputTexto}
-              />
-              <div style={estilosEmisor.filaBotonesTemporizador}>
-                <button
-                  style={estilosEmisor.btnAccion}
-                  onClick={() => enviarNota(textoNota)}
-                >
-                  📤 Aplicar nota
-                </button>
-                <button
-                  style={{
-                    ...estilosEmisor.btnAccion,
-                    backgroundColor: "#374151",
-                  }}
-                  onClick={() => enviarNota("")}
-                >
-                  Limpiar
-                </button>
-              </div>
-            </div>
           </section>
           {/* APARIENCIA DEL MONITOR */}
           <section style={estilosEmisor.tarjeta}>
@@ -1307,11 +1242,6 @@ const estilosEmisor = {
     fontSize: "0.95rem",
     outline: "none",
   },
-  gridNotasRapidas: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "8px",
-  },
   gridColores: {
     display: "flex",
     flexWrap: "wrap",
@@ -1389,16 +1319,6 @@ const estilosEmisor = {
     padding: "8px 10px",
     cursor: "pointer",
     fontSize: "0.9rem",
-  },
-  btnNotaRapida: {
-    backgroundColor: "#1e202b",
-    color: "#f59e0b",
-    border: "1px solid",
-    borderRadius: "8px",
-    padding: "10px 8px",
-    fontSize: "0.8rem",
-    fontWeight: "600",
-    cursor: "pointer",
   },
 };
 

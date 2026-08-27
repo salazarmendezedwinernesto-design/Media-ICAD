@@ -50,14 +50,10 @@ export default function MonitorRetorno({
     estado.temporizador.activo || estado.temporizador.restanteAlPausar !== null;
   const mostrarReloj = estado.reloj.visible;
 
-  // Cuadro de mensaje: muestra el mensaje escrito manualmente si hay uno
-  // activo; si no, cae al aviso rápido/predeterminado (nota) más reciente.
-  // Así, sea un mensaje escrito o uno de los botones predeterminados,
-  // ambos aparecen en el mismo cuadro.
-  const mensajeEscrito =
+  // Cuadro de mensaje: el único origen de texto ahora es el mensaje
+  // personalizado que escribe el operador desde el Emisor.
+  const textoCuadroMensaje =
     estado.mensaje.visible && estado.mensaje.texto ? estado.mensaje.texto : "";
-  const notaTexto = estado.nota.texto || "";
-  const textoCuadroMensaje = mensajeEscrito || notaTexto;
   const mostrarMensaje = !!textoCuadroMensaje;
 
   const colorTemporizador = tiempoCumplido

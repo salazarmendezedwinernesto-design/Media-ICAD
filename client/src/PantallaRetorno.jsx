@@ -862,11 +862,6 @@ function PantallaRetornoEmisor({ alSalir }) {
                 </button>
               ))}
             </div>
-            <span style={estilosEmisor.etiquetaChica}>
-              ¿Vas a subir un logo nuevo? Pídeselo a quien mantiene el código:
-              solo hay que agregar el archivo de imagen en{" "}
-              <code>client/src/logos.js</code> y aparece aquí solo.
-            </span>
 
             <div style={estilosEmisor.formMensaje}>
               <label style={estilosEmisor.etiquetaChica}>
@@ -1456,9 +1451,12 @@ const estilosReceptor = {
     backgroundColor: "#000",
     color: "#fff",
     minHeight: "100vh",
-    width: "100vw",
+    width: "100%",
+    maxWidth: "1800px",
+    margin: "0 auto",
     display: "flex",
     flexDirection: "column",
+    justifyContent: "center",
     fontFamily: "system-ui, sans-serif",
     padding: "24px",
     boxSizing: "border-box",

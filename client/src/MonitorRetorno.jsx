@@ -114,7 +114,7 @@ export default function MonitorRetorno({
           style={{
             ...estilos.cronometro,
             color: mostrarTemporizador ? colorTemporizador : "#3f4756",
-            fontSize: `clamp(2.2rem, ${16 * escala}${u}, 8rem)`,
+            fontSize: `clamp(2.6rem, ${22 * escala}${u}, 11rem)`,
             textShadow: mostrarTemporizador
               ? `0 0 ${30 * escala}${w} ${colorTemporizador}55`
               : "none",
@@ -149,7 +149,7 @@ export default function MonitorRetorno({
           <div
             style={{
               ...estilos.hora,
-              fontSize: `clamp(1.3rem, ${6.5 * escala}${u}, 3.2rem)`,
+              fontSize: `clamp(1.6rem, ${9 * escala}${u}, 5rem)`,
               opacity: mostrarReloj ? 1 : 0.3,
             }}
           >
@@ -158,7 +158,7 @@ export default function MonitorRetorno({
           <div
             style={{
               ...estilos.fecha,
-              fontSize: `clamp(0.6rem, ${1.9 * escala}${u}, 1rem)`,
+              fontSize: `clamp(0.75rem, ${2.4 * escala}${u}, 1.3rem)`,
               opacity: mostrarReloj ? 1 : 0.3,
             }}
           >
@@ -178,7 +178,7 @@ export default function MonitorRetorno({
           <p
             style={{
               ...estilos.mensaje,
-              fontSize: `clamp(1rem, ${5 * escala}${u}, 2.6rem)`,
+              fontSize: `clamp(1.2rem, ${6 * escala}${u}, 3.4rem)`,
               opacity: mostrarMensaje ? 1 : 0.3,
             }}
           >
@@ -285,6 +285,9 @@ const estilos = {
     borderRadius: preview ? "10px" : "16px",
     padding: preview ? "3% 4%" : "18px 24px",
     boxSizing: "border-box",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
   }),
   filaEncabezado: {
     display: "flex",

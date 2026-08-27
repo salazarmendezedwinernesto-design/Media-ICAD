@@ -48,9 +48,17 @@ export default function MonitorRetorno({
 
   const mostrarTemporizador =
     estado.temporizador.activo || estado.temporizador.restanteAlPausar !== null;
-  const mostrarMensaje = estado.mensaje.visible && estado.mensaje.texto;
   const mostrarReloj = estado.reloj.visible;
-  const mostrarNota = !!estado.nota.texto;
+
+  // Cuadro de mensaje: muestra el mensaje escrito manualmente si hay uno
+  // activo; si no, cae al aviso rápido/predeterminado (nota) más reciente.
+  // Así, sea un mensaje escrito o uno de los botones predeterminados,
+  // ambos aparecen en el mismo cuadro.
+  const mensajeEscrito =
+    estado.mensaje.visible && estado.mensaje.texto ? estado.mensaje.texto : "";
+  const notaTexto = estado.nota.texto || "";
+  const textoCuadroMensaje = mensajeEscrito || notaTexto;
+  const mostrarMensaje = !!textoCuadroMensaje;
 
   const colorTemporizador = tiempoCumplido
     ? "#ef4444"
@@ -182,21 +190,10 @@ export default function MonitorRetorno({
               opacity: mostrarMensaje ? 1 : 0.3,
             }}
           >
-            {mostrarMensaje ? estado.mensaje.texto : "—"}
+            {mostrarMensaje ? textoCuadroMensaje : "—"}
           </p>
         </section>
       </div>
-
-      {mostrarNota && (
-        <p
-          style={{
-            ...estilos.nota,
-            fontSize: `clamp(0.6rem, ${1.8 * escala}${u}, 1rem)`,
-          }}
-        >
-          {estado.nota.texto}
-        </p>
-      )}
     </div>
   );
 }
@@ -369,7 +366,7 @@ const estilos = {
     textAlign: "center",
     fontWeight: 900,
     fontVariantNumeric: "tabular-nums",
-    color: "#f97316",
+    color: "#ffffff",
     lineHeight: 1,
   },
   fecha: {

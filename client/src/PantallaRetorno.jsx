@@ -211,11 +211,6 @@ function PantallaRetornoEmisor({ alSalir }) {
   const [conteoReceptores, setConteoReceptores] = useState(0);
   const [horaActualPreview, setHoraActualPreview] = useState(new Date());
 
-  // Inputs de texto de la tarjeta "Marca / Logo" (nombre y país a
-  // mostrar). Se inicializan vacíos = usar el nombre/país del logo elegido.
-  const [nombreMarcaInput, setNombreMarcaInput] = useState("");
-  const [paisMarcaInput, setPaisMarcaInput] = useState("");
-
   // Tiempos programados (presets de contador con nombre), guardados en
   // este navegador.
   const [presets, setPresets] = useState(() => cargarPresetsGuardados());
@@ -391,15 +386,6 @@ function PantallaRetornoEmisor({ alSalir }) {
   // --- Marca / Logo -------------------------------------------------
   const seleccionarLogo = (logoId) => {
     enviar({ marca: { logoId } });
-  };
-
-  const aplicarTextoMarca = () => {
-    enviar({
-      marca: {
-        nombre: nombreMarcaInput.trim(),
-        pais: paisMarcaInput.trim(),
-      },
-    });
   };
 
   // --- Tiempos programados (presets) --------------------------------
@@ -830,9 +816,8 @@ function PantallaRetornoEmisor({ alSalir }) {
           <section style={estilosEmisor.tarjeta}>
             <span style={estilosEmisor.tituloTarjeta}>🖼️ MARCA / LOGO</span>
             <span style={estilosEmisor.etiquetaChica}>
-              Elige qué logo usar y, si quieres, escribe un nombre y país
-              distintos al del logo. Aparece arriba a la izquierda del monitor
-              de escenario.
+              Elige qué logo usar. Aparece arriba a la izquierda del monitor de
+              escenario.
             </span>
 
             <span style={estilosEmisor.etiquetaChica}>Logo a usar:</span>
@@ -861,35 +846,6 @@ function PantallaRetornoEmisor({ alSalir }) {
                   <span>{logo.nombre}</span>
                 </button>
               ))}
-            </div>
-
-            <div style={estilosEmisor.formMensaje}>
-              <label style={estilosEmisor.etiquetaChica}>
-                Nombre a mostrar (vacío = usar el del logo):
-              </label>
-              <input
-                type="text"
-                value={nombreMarcaInput}
-                onChange={(e) => setNombreMarcaInput(e.target.value)}
-                placeholder="Ej: Ministerio Canaán"
-                style={estilosEmisor.inputTexto}
-              />
-              <label style={estilosEmisor.etiquetaChica}>
-                País / subtítulo (vacío = usar el del logo):
-              </label>
-              <input
-                type="text"
-                value={paisMarcaInput}
-                onChange={(e) => setPaisMarcaInput(e.target.value)}
-                placeholder="Ej: EL SALVADOR"
-                style={estilosEmisor.inputTexto}
-              />
-              <button
-                style={estilosEmisor.btnAccion}
-                onClick={aplicarTextoMarca}
-              >
-                📤 Aplicar
-              </button>
             </div>
           </section>
         </div>

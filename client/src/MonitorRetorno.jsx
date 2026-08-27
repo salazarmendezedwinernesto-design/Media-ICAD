@@ -1,18 +1,26 @@
 import React from "react";
-import LiveStream from "./LiveStream";
+import { buscarLogo } from "./logos";
 
 /**
  * MonitorRetorno
  * ---------------------------------------------------------------------
- * Diseño de tarjetas (branding + cronómetro / mensaje / hora / video en
- * vivo) que se usa en DOS lugares con el mismo JSX, para que la vista
- * previa del Emisor sea un espejo fiel de lo que ve el Receptor real:
+ * Diseño de tarjetas (branding + cronómetro / hora / mensaje) que se usa
+ * en DOS lugares con el mismo JSX, para que la vista previa del Emisor
+ * sea un espejo fiel de lo que ve el Receptor real:
  *
  *   - Dentro de la "Vista previa del monitor" del Emisor (chica, dentro
  *     de una tarjeta) -> modoPreview = true, usa unidades "cqh/cqw"
  *     (container query units) para escalar con el tamaño de la caja.
  *   - A pantalla completa en el Receptor real -> modoPreview = false,
  *     usa "vh/vw" para escalar con el tamaño real de la pantalla.
+ *
+ * Layout FIJO a propósito: las tres tarjetas (Tiempo Restante, Hora y
+ * fecha actual, Mensaje) SIEMPRE están presentes en el DOM con el mismo
+ * tamaño y el mismo borde blanco, aunque el Emisor oculte el reloj o no
+ * haya ningún conteo corriendo. Lo único que cambia es el contenido de
+ * adentro (se muestra un guion "—" en vez del valor), nunca la caja. Así
+ * el monitor de escenario no "salta" ni se reacomoda cuando el operador
+ * activa o desactiva algo.
  *
  * No maneja sockets ni estado propio -- todo le llega por props desde
  * PantallaRetorno.jsx, que es quien sabe hablar con el servidor.
@@ -23,15 +31,20 @@ export default function MonitorRetorno({
   segundosVista,
   tiempoCumplido,
   enAlerta,
-  whepUrl,
   modoPreview = false,
-  nombreIglesia = "Asambleas de Dios",
-  paisIglesia = "EL SALVADOR",
 }) {
   const u = modoPreview ? "cqh" : "vh";
   const w = modoPreview ? "cqw" : "vw";
   const escala = modoPreview ? 1 : estado.estilo?.tamano === "extra" ? 1.3 : 1;
   const colorAcento = estado.estilo?.colorAcento || "#f59e0b";
+
+  // Marca (logo + nombre + país) que el Emisor eligió para el monitor.
+  // Si el estado todavía no trae "marca" (ej. servidor viejo sin
+  // reiniciar), se usa el logo por defecto sin romper nada.
+  const marca = estado.marca || {};
+  const logo = buscarLogo(marca.logoId);
+  const nombreIglesia = marca.nombre?.trim() || logo.nombre;
+  const paisIglesia = marca.pais?.trim() || logo.pais;
 
   const mostrarTemporizador =
     estado.temporizador.activo || estado.temporizador.restanteAlPausar !== null;
@@ -47,11 +60,26 @@ export default function MonitorRetorno({
 
   return (
     <div style={estilos.contenedor(modoPreview)}>
-      {/* Encabezado + cronómetro */}
+      {/* Encabezado + cronómetro. La tarjeta siempre tiene el mismo alto;
+          si no hay conteo activo, se muestra "00:00" apagado en vez de
+          desaparecer la caja. */}
       <section style={estilos.tarjeta(modoPreview)}>
         <div style={estilos.filaEncabezado}>
           <div style={estilos.marca}>
-            <IconoIglesia size={`clamp(1.1rem, ${4.5 * escala}${u}, 2.4rem)`} />
+            {logo.imagen ? (
+              <img
+                src={logo.imagen}
+                alt={nombreIglesia}
+                style={{
+                  ...estilos.logoImagen,
+                  height: `clamp(1.4rem, ${5.5 * escala}${u}, 3rem)`,
+                }}
+              />
+            ) : (
+              <IconoIglesia
+                size={`clamp(1.1rem, ${4.5 * escala}${u}, 2.4rem)`}
+              />
+            )}
             <div style={estilos.marcaTexto}>
               <span
                 style={{
@@ -71,39 +99,73 @@ export default function MonitorRetorno({
               </span>
             </div>
           </div>
-          {mostrarTemporizador && (
-            <span
-              style={{
-                ...estilos.etiqueta,
-                fontSize: `clamp(0.55rem, ${1.7 * escala}${u}, 0.85rem)`,
-              }}
-            >
-              Tiempo Restante
-            </span>
-          )}
+          <span
+            style={{
+              ...estilos.etiqueta,
+              fontSize: `clamp(0.55rem, ${1.7 * escala}${u}, 0.85rem)`,
+              opacity: mostrarTemporizador ? 1 : 0.35,
+            }}
+          >
+            Tiempo Restante
+          </span>
         </div>
 
-        {mostrarTemporizador && (
-          <div
-            style={{
-              ...estilos.cronometro,
-              color: colorTemporizador,
-              fontSize: `clamp(2.2rem, ${16 * escala}${u}, 8rem)`,
-              textShadow: `0 0 ${30 * escala}${w} ${colorTemporizador}55`,
-              animation: tiempoCumplido
+        <div
+          style={{
+            ...estilos.cronometro,
+            color: mostrarTemporizador ? colorTemporizador : "#3f4756",
+            fontSize: `clamp(2.2rem, ${16 * escala}${u}, 8rem)`,
+            textShadow: mostrarTemporizador
+              ? `0 0 ${30 * escala}${w} ${colorTemporizador}55`
+              : "none",
+            animation: !mostrarTemporizador
+              ? "none"
+              : tiempoCumplido
                 ? "retornoParpadeoFuerte 0.6s steps(1) infinite"
                 : enAlerta
                   ? "retornoParpadeoSuave 1s ease-in-out infinite"
                   : "none",
-            }}
-          >
-            {formatearDuracion(Math.abs(segundosVista))}
-          </div>
-        )}
+          }}
+        >
+          {mostrarTemporizador
+            ? formatearDuracion(Math.abs(segundosVista))
+            : "00:00"}
+        </div>
       </section>
 
-      {/* Mensaje */}
-      {mostrarMensaje && (
+      {/* Hora actual + Mensaje: dos columnas de ancho fijo, SIEMPRE las
+          dos presentes (no se reacomoda el grid si se oculta el reloj o
+          no hay mensaje puesto). */}
+      <div style={estilos.filaInferior}>
+        <section style={estilos.tarjeta(modoPreview)}>
+          <span
+            style={{
+              ...estilos.etiquetaCentrada,
+              fontSize: `clamp(0.55rem, ${1.7 * escala}${u}, 0.85rem)`,
+            }}
+          >
+            Hora y fecha actual
+          </span>
+          <div
+            style={{
+              ...estilos.hora,
+              fontSize: `clamp(1.3rem, ${6.5 * escala}${u}, 3.2rem)`,
+              opacity: mostrarReloj ? 1 : 0.3,
+            }}
+          >
+            {mostrarReloj ? formatearReloj(horaActual) : "--:--:--"}
+          </div>
+          <div
+            style={{
+              ...estilos.fecha,
+              fontSize: `clamp(0.6rem, ${1.9 * escala}${u}, 1rem)`,
+              opacity: mostrarReloj ? 1 : 0.3,
+            }}
+          >
+            {mostrarReloj ? formatearFecha(horaActual) : "—"}
+          </div>
+        </section>
+
         <section style={estilos.tarjeta(modoPreview)}>
           <span
             style={{
@@ -117,54 +179,11 @@ export default function MonitorRetorno({
             style={{
               ...estilos.mensaje,
               fontSize: `clamp(1rem, ${5 * escala}${u}, 2.6rem)`,
+              opacity: mostrarMensaje ? 1 : 0.3,
             }}
           >
-            {estado.mensaje.texto}
+            {mostrarMensaje ? estado.mensaje.texto : "—"}
           </p>
-        </section>
-      )}
-
-      {/* Hora actual + video en vivo */}
-      <div style={estilos.filaInferior(mostrarReloj)}>
-        {mostrarReloj && (
-          <section style={estilos.tarjeta(modoPreview)}>
-            <span
-              style={{
-                ...estilos.etiquetaCentrada,
-                fontSize: `clamp(0.55rem, ${1.7 * escala}${u}, 0.85rem)`,
-              }}
-            >
-              Hora y fecha actual
-            </span>
-            <div
-              style={{
-                ...estilos.hora,
-                fontSize: `clamp(1.3rem, ${6.5 * escala}${u}, 3.2rem)`,
-              }}
-            >
-              {formatearReloj(horaActual)}
-            </div>
-            <div
-              style={{
-                ...estilos.fecha,
-                fontSize: `clamp(0.6rem, ${1.9 * escala}${u}, 1rem)`,
-              }}
-            >
-              {formatearFecha(horaActual)}
-            </div>
-          </section>
-        )}
-
-        <section
-          style={{ ...estilos.tarjeta(modoPreview), ...estilos.tarjetaVideo }}
-        >
-          <span style={estilos.badgeEnVivo}>
-            <span style={estilos.puntoRojo} />
-            EN VIVO
-          </span>
-          <div style={estilos.videoEnvoltorio}>
-            <LiveStream whepUrl={whepUrl} alto="100%" />
-          </div>
         </section>
       </div>
 
@@ -241,7 +260,10 @@ function formatearFecha(fecha) {
 // ---- Estilos ------------------------------------------------------------
 
 const BG_CARD = "#0a0f1a";
-const BORDE_CIAN = "rgba(34, 211, 238, 0.45)";
+// Borde blanco fijo: mismo grosor y color siempre, sin importar qué
+// tarjeta esté "apagada" (solo cambia la opacidad del contenido, nunca
+// el borde ni el tamaño de la caja).
+const BORDE_BLANCO = "rgba(255, 255, 255, 0.85)";
 
 const estilos = {
   contenedor: (preview) => ({
@@ -259,7 +281,7 @@ const estilos = {
   }),
   tarjeta: (preview) => ({
     backgroundColor: BG_CARD,
-    border: `1.5px solid ${BORDE_CIAN}`,
+    border: `1.5px solid ${BORDE_BLANCO}`,
     borderRadius: preview ? "10px" : "16px",
     padding: preview ? "3% 4%" : "18px 24px",
     boxSizing: "border-box",
@@ -275,6 +297,12 @@ const estilos = {
     alignItems: "center",
     gap: "10px",
     minWidth: 0,
+  },
+  logoImagen: {
+    width: "auto",
+    maxWidth: "40%",
+    objectFit: "contain",
+    flexShrink: 0,
   },
   marcaTexto: {
     display: "flex",
@@ -325,13 +353,15 @@ const estilos = {
     margin: 0,
     wordBreak: "break-word",
   },
-  filaInferior: (dosColumnas) => ({
+  // Grid de dos columnas SIEMPRE fijo (Hora | Mensaje). Ya no depende de
+  // si el reloj está visible, así que nunca se reacomoda.
+  filaInferior: {
     display: "grid",
-    gridTemplateColumns: dosColumnas ? "1fr 1fr" : "1fr",
+    gridTemplateColumns: "1fr 1fr",
     gap: "16px",
     flex: 1,
     minHeight: 0,
-  }),
+  },
   hora: {
     textAlign: "center",
     fontWeight: 900,
@@ -343,40 +373,6 @@ const estilos = {
     textAlign: "center",
     color: "#9ca3af",
     marginTop: "6px",
-  },
-  tarjetaVideo: {
-    position: "relative",
-    padding: 0,
-    overflow: "hidden",
-    display: "flex",
-    minHeight: 0,
-  },
-  videoEnvoltorio: {
-    width: "100%",
-    height: "100%",
-  },
-  badgeEnVivo: {
-    position: "absolute",
-    top: "3%",
-    left: "4%",
-    zIndex: 2,
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    fontSize: "0.7rem",
-    fontWeight: 700,
-    letterSpacing: "0.08em",
-    color: "#fff",
-    backgroundColor: "rgba(0,0,0,0.55)",
-    padding: "3px 8px",
-    borderRadius: "999px",
-  },
-  puntoRojo: {
-    width: "7px",
-    height: "7px",
-    borderRadius: "50%",
-    backgroundColor: "#ef4444",
-    animation: "retornoParpadeoFuerte 1.2s ease-in-out infinite",
   },
   nota: {
     textAlign: "center",

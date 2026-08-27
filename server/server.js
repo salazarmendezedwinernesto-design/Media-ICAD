@@ -279,6 +279,11 @@ let pantallaRetorno = {
   mensaje: { texto: "", visible: false },
   nota: { texto: "" }, // etiqueta corta de "siguiente", ej. "Después: Ofrenda"
   estilo: { colorAcento: "#f59e0b", tamano: "grande" }, // apariencia del monitor, la decide el Emisor
+  // Marca (logo + nombre + país) que aparece arriba a la izquierda del
+  // monitor. "logoId" apunta a uno de los logos definidos en
+  // client/src/logos.js; "nombre"/"pais" son overrides de texto libre
+  // opcionales (si están vacíos, se usa el nombre/país del logo elegido).
+  marca: { logoId: "asambleas-de-dios", nombre: "", pais: "" },
   actualizadoPor: null,
   hora: null,
 };
@@ -500,6 +505,9 @@ io.on("connection", (socket) => {
         : {}),
       ...(datos.estilo
         ? { estilo: { ...pantallaRetorno.estilo, ...datos.estilo } }
+        : {}),
+      ...(datos.marca
+        ? { marca: { ...pantallaRetorno.marca, ...datos.marca } }
         : {}),
       actualizadoPor: datos.de || socket.usuario || "Pantalla",
       hora: Date.now(),

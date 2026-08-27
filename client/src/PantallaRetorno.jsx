@@ -1,13 +1,34 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import {
-  SERVER_URL,
-  MEDIAMTX_WHEP_URL,
-  MEDIAMTX_RTMP_URL,
-  MEDIAMTX_STREAM_KEY,
-} from "./config";
+import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
 import MonitorRetorno from "./MonitorRetorno";
+import { LOGOS } from "./logos";
+
+// Los "tiempos programados" (presets de contador con nombre) se guardan
+// solo en el navegador del Emisor -- son un atajo personal del operador,
+// no hace falta sincronizarlos con el servidor ni con el Receptor.
+const CLAVE_PRESETS = "retorno_presets_tiempos_v1";
+
+function cargarPresetsGuardados() {
+  try {
+    const bruto = localStorage.getItem(CLAVE_PRESETS);
+    const lista = bruto ? JSON.parse(bruto) : [];
+    return Array.isArray(lista) ? lista : [];
+  } catch {
+    return [];
+  }
+}
+
+function guardarPresetsEnDisco(lista) {
+  try {
+    localStorage.setItem(CLAVE_PRESETS, JSON.stringify(lista));
+  } catch {
+    // Si el navegador bloquea localStorage (modo privado, etc.), los
+    // tiempos programados simplemente no persisten entre sesiones -- no
+    // es un error grave, el resto del panel sigue funcionando normal.
+  }
+}
 
 const SOCKET_URL = SERVER_URL;
 
@@ -153,35 +174,8 @@ export default function PantallaRetorno({ alSalir }) {
 // ===================== EMISOR =====================
 // Panel de control: el operador decide qué se muestra en el/los monitores
 // de escenario. Todo lo que aquí se manda es texto libre escrito a mano.
-// Campo de solo lectura con botón de copiar, para los datos de conexión
-// de OBS (servidor RTMP y clave de transmisión).
-function CampoCopiable({ etiqueta, valor }) {
-  const [copiado, setCopiado] = useState(false);
-
-  const copiar = async () => {
-    try {
-      await navigator.clipboard.writeText(valor);
-    } catch {
-      // Si el navegador bloquea el portapapeles (ej. http sin TLS), el
-      // usuario igual puede seleccionar y copiar el texto a mano.
-    }
-    setCopiado(true);
-    setTimeout(() => setCopiado(false), 1500);
-  };
-
-  return (
-    <div style={estilosEmisor.campoCopiable}>
-      <span style={estilosEmisor.campoCopiableEtiqueta}>{etiqueta}</span>
-      <div style={estilosEmisor.campoCopiableFila}>
-        <code style={estilosEmisor.campoCopiableValor}>{valor}</code>
-        <button style={estilosEmisor.btnCopiar} onClick={copiar}>
-          {copiado ? "✅" : "📋"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
+// (Ya no hay conexión de video vía OBS/RTMP: ese flujo no se usa en la
+// Pantalla de Retorno, así que se quitó por completo de este panel.)
 function PantallaRetornoEmisor({ alSalir }) {
   const socketRef = useRef(null);
 
@@ -199,6 +193,7 @@ function PantallaRetornoEmisor({ alSalir }) {
     mensaje: { texto: "", visible: false },
     nota: { texto: "" },
     estilo: { colorAcento: "#f59e0b", tamano: "grande" },
+    marca: { logoId: "asambleas-de-dios", nombre: "", pais: "" },
   });
 
   const estadoRef = useRef(estado);
@@ -215,6 +210,17 @@ function PantallaRetornoEmisor({ alSalir }) {
   const [conectado, setConectado] = useState(true);
   const [conteoReceptores, setConteoReceptores] = useState(0);
   const [horaActualPreview, setHoraActualPreview] = useState(new Date());
+
+  // Inputs de texto de la tarjeta "Marca / Logo" (nombre y país a
+  // mostrar). Se inicializan vacíos = usar el nombre/país del logo elegido.
+  const [nombreMarcaInput, setNombreMarcaInput] = useState("");
+  const [paisMarcaInput, setPaisMarcaInput] = useState("");
+
+  // Tiempos programados (presets de contador con nombre), guardados en
+  // este navegador.
+  const [presets, setPresets] = useState(() => cargarPresetsGuardados());
+  const [presetNombreInput, setPresetNombreInput] = useState("");
+  const [presetMinutosInput, setPresetMinutosInput] = useState(10);
 
   useEffect(() => {
     const socket = io(SOCKET_URL, { auth: { token: obtenerToken() } });
@@ -235,6 +241,8 @@ function PantallaRetornoEmisor({ alSalir }) {
       setEstado(datos);
       setTextoMensaje(datos.mensaje?.texto || "");
       setTextoNota(datos.nota?.texto || "");
+      setNombreMarcaInput(datos.marca?.nombre || "");
+      setPaisMarcaInput(datos.marca?.pais || "");
     });
 
     socket.on("retorno:conteoReceptores", (n) => setConteoReceptores(n));
@@ -275,8 +283,12 @@ function PantallaRetornoEmisor({ alSalir }) {
     enviar({ reloj: { visible: !estado.reloj.visible } });
   };
 
-  const iniciarRegresiva = () => {
-    const duracionSegundos = Math.max(1, Math.round(minutosInput * 60));
+  // "minutosOverride" permite iniciar la cuenta con un valor distinto al
+  // que está escrito en el input (lo usan los tiempos programados/presets).
+  const iniciarRegresiva = (minutosOverride) => {
+    const minutos =
+      typeof minutosOverride === "number" ? minutosOverride : minutosInput;
+    const duracionSegundos = Math.max(1, Math.round(minutos * 60));
     enviar({
       temporizador: {
         activo: true,
@@ -376,6 +388,42 @@ function PantallaRetornoEmisor({ alSalir }) {
     enviar({ estilo: { tamano: id } });
   };
 
+  // --- Marca / Logo -------------------------------------------------
+  const seleccionarLogo = (logoId) => {
+    enviar({ marca: { logoId } });
+  };
+
+  const aplicarTextoMarca = () => {
+    enviar({
+      marca: {
+        nombre: nombreMarcaInput.trim(),
+        pais: paisMarcaInput.trim(),
+      },
+    });
+  };
+
+  // --- Tiempos programados (presets) --------------------------------
+  const agregarPreset = () => {
+    const nombre = presetNombreInput.trim();
+    if (!nombre) return;
+    const minutos = Math.max(1, Math.round(Number(presetMinutosInput)) || 1);
+    const nuevo = { id: `${Date.now()}`, nombre, minutos };
+    const lista = [...presets, nuevo];
+    setPresets(lista);
+    guardarPresetsEnDisco(lista);
+    setPresetNombreInput("");
+  };
+
+  const eliminarPreset = (id) => {
+    const lista = presets.filter((p) => p.id !== id);
+    setPresets(lista);
+    guardarPresetsEnDisco(lista);
+  };
+
+  const iniciarPreset = (preset) => {
+    iniciarRegresiva(preset.minutos);
+  };
+
   const temporizadorEnMarcha = estado.temporizador.activo;
   const enPausa =
     !estado.temporizador.activo &&
@@ -451,35 +499,12 @@ function PantallaRetornoEmisor({ alSalir }) {
                 segundosVista={segundosVista}
                 tiempoCumplido={tiempoCumplidoPreview}
                 enAlerta={enAlertaPreview}
-                whepUrl={MEDIAMTX_WHEP_URL}
                 modoPreview
               />
             </div>
             <span style={estilosEmisor.etiquetaChica}>
               Así se ve ahora mismo en el monitor real.
             </span>
-          </section>
-
-          {/* CONEXIÓN CON OBS */}
-          <section style={estilosEmisor.tarjeta}>
-            <span style={estilosEmisor.tituloTarjeta}>
-              🔌 CONEXIÓN CON OBS STUDIO
-            </span>
-            <span style={estilosEmisor.etiquetaChica}>
-              Configura esto en OBS → Configuración → Emisión → Servicio
-              personalizado. En cuanto OBS empiece a transmitir, la señal
-              aparece automáticamente arriba y en todos los monitores de
-              escenario (Receptores).
-            </span>
-
-            <CampoCopiable
-              etiqueta="Servidor (RTMP)"
-              valor={MEDIAMTX_RTMP_URL}
-            />
-            <CampoCopiable
-              etiqueta="Clave de transmisión"
-              valor={MEDIAMTX_STREAM_KEY}
-            />
           </section>
         </aside>
 
@@ -559,7 +584,7 @@ function PantallaRetornoEmisor({ alSalir }) {
                   />
                   <button
                     style={estilosEmisor.btnAccion}
-                    onClick={iniciarRegresiva}
+                    onClick={() => iniciarRegresiva()}
                   >
                     ▶️ Iniciar cuenta regresiva
                   </button>
@@ -610,6 +635,75 @@ function PantallaRetornoEmisor({ alSalir }) {
                 </button>
               </div>
             )}
+          </section>
+
+          {/* TIEMPOS PROGRAMADOS (presets de contador con nombre) */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>
+              🗂️ TIEMPOS PROGRAMADOS
+            </span>
+            <span style={estilosEmisor.etiquetaChica}>
+              Guarda de una vez los tiempos que usas seguido (ej. "Alabanza" 20
+              min, "Prédica" 45 min) y arráncalos con un clic el día del evento,
+              sin escribir minutos cada vez.
+            </span>
+
+            {presets.length > 0 && (
+              <div style={estilosEmisor.listaPresets}>
+                {presets.map((p) => (
+                  <div key={p.id} style={estilosEmisor.filaPreset}>
+                    <span style={estilosEmisor.nombrePreset}>
+                      {p.nombre}
+                      <span style={estilosEmisor.minutosPreset}>
+                        {" "}
+                        · {p.minutos} min
+                      </span>
+                    </span>
+                    <div style={estilosEmisor.botonesPreset}>
+                      <button
+                        style={{
+                          ...estilosEmisor.btnAccion,
+                          padding: "8px 12px",
+                          fontSize: "0.8rem",
+                        }}
+                        onClick={() => iniciarPreset(p)}
+                      >
+                        ▶️ Iniciar
+                      </button>
+                      <button
+                        style={estilosEmisor.btnEliminarPreset}
+                        title="Eliminar este tiempo programado"
+                        onClick={() => eliminarPreset(p.id)}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={estilosEmisor.filaInputMinutos}>
+              <input
+                type="text"
+                value={presetNombreInput}
+                onChange={(e) => setPresetNombreInput(e.target.value)}
+                placeholder="Nombre (ej: Alabanza)"
+                style={{ ...estilosEmisor.inputTexto, flex: 1 }}
+              />
+              <input
+                type="number"
+                min="1"
+                value={presetMinutosInput}
+                onChange={(e) =>
+                  setPresetMinutosInput(Number(e.target.value) || 1)
+                }
+                style={estilosEmisor.inputMinutos}
+              />
+              <button style={estilosEmisor.btnAccion} onClick={agregarPreset}>
+                💾 Guardar
+              </button>
+            </div>
           </section>
 
           {/* MENSAJE PERSONALIZADO */}
@@ -729,6 +823,78 @@ function PantallaRetornoEmisor({ alSalir }) {
                   {t.etiqueta}
                 </button>
               ))}
+            </div>
+          </section>
+
+          {/* MARCA / LOGO (arriba a la izquierda del monitor) */}
+          <section style={estilosEmisor.tarjeta}>
+            <span style={estilosEmisor.tituloTarjeta}>🖼️ MARCA / LOGO</span>
+            <span style={estilosEmisor.etiquetaChica}>
+              Elige qué logo usar y, si quieres, escribe un nombre y país
+              distintos al del logo. Aparece arriba a la izquierda del monitor
+              de escenario.
+            </span>
+
+            <span style={estilosEmisor.etiquetaChica}>Logo a usar:</span>
+            <div style={estilosEmisor.gridLogos}>
+              {LOGOS.map((logo) => (
+                <button
+                  key={logo.id}
+                  onClick={() => seleccionarLogo(logo.id)}
+                  style={{
+                    ...estilosEmisor.btnLogo,
+                    borderColor:
+                      (estado.marca?.logoId || "asambleas-de-dios") === logo.id
+                        ? "#2563eb"
+                        : "#2d303f",
+                  }}
+                >
+                  {logo.imagen ? (
+                    <img
+                      src={logo.imagen}
+                      alt={logo.nombre}
+                      style={estilosEmisor.previewLogoImg}
+                    />
+                  ) : (
+                    <span style={estilosEmisor.previewLogoPlaceholder}>🖼️</span>
+                  )}
+                  <span>{logo.nombre}</span>
+                </button>
+              ))}
+            </div>
+            <span style={estilosEmisor.etiquetaChica}>
+              ¿Vas a subir un logo nuevo? Pídeselo a quien mantiene el código:
+              solo hay que agregar el archivo de imagen en{" "}
+              <code>client/src/logos.js</code> y aparece aquí solo.
+            </span>
+
+            <div style={estilosEmisor.formMensaje}>
+              <label style={estilosEmisor.etiquetaChica}>
+                Nombre a mostrar (vacío = usar el del logo):
+              </label>
+              <input
+                type="text"
+                value={nombreMarcaInput}
+                onChange={(e) => setNombreMarcaInput(e.target.value)}
+                placeholder="Ej: Ministerio Canaán"
+                style={estilosEmisor.inputTexto}
+              />
+              <label style={estilosEmisor.etiquetaChica}>
+                País / subtítulo (vacío = usar el del logo):
+              </label>
+              <input
+                type="text"
+                value={paisMarcaInput}
+                onChange={(e) => setPaisMarcaInput(e.target.value)}
+                placeholder="Ej: EL SALVADOR"
+                style={estilosEmisor.inputTexto}
+              />
+              <button
+                style={estilosEmisor.btnAccion}
+                onClick={aplicarTextoMarca}
+              >
+                📤 Aplicar
+              </button>
             </div>
           </section>
         </div>
@@ -899,7 +1065,6 @@ function PantallaRetornoReceptor({ alSalir }) {
         segundosVista={segundosVista}
         tiempoCumplido={tiempoCumplido}
         enAlerta={enAlerta}
-        whepUrl={MEDIAMTX_WHEP_URL}
       />
 
       {/* Indicador discreto de conexión: verde = conectado al servidor,
@@ -1160,43 +1325,6 @@ const estilosEmisor = {
   avisoTiempo: { fontSize: "0.9rem", color: "#ef4444", display: "block" },
   filaInputMinutos: { display: "flex", gap: "8px", alignItems: "center" },
   etiquetaChica: { fontSize: "0.8rem", color: "#9ca3af" },
-  campoCopiable: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "4px",
-  },
-  campoCopiableEtiqueta: {
-    fontSize: "0.75rem",
-    fontWeight: 700,
-    color: "#9ca3af",
-    textTransform: "uppercase",
-    letterSpacing: "0.05em",
-  },
-  campoCopiableFila: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-  },
-  campoCopiableValor: {
-    flex: 1,
-    backgroundColor: "#0b0c10",
-    border: "1px solid #2d303f",
-    borderRadius: "6px",
-    color: "#67e8f9",
-    padding: "8px 10px",
-    fontSize: "0.85rem",
-    overflowX: "auto",
-    whiteSpace: "nowrap",
-  },
-  btnCopiar: {
-    flexShrink: 0,
-    backgroundColor: "#1f2430",
-    border: "1px solid #2d303f",
-    borderRadius: "6px",
-    padding: "8px 10px",
-    cursor: "pointer",
-    fontSize: "0.9rem",
-  },
   inputMinutos: {
     width: "70px",
     backgroundColor: "#0b0c10",
@@ -1244,6 +1372,72 @@ const estilosEmisor = {
     borderRadius: "50%",
     border: "1px solid #2d303f",
     cursor: "pointer",
+  },
+  gridLogos: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px",
+  },
+  btnLogo: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "6px",
+    backgroundColor: "#1e202b",
+    border: "2px solid #2d303f",
+    borderRadius: "8px",
+    padding: "10px",
+    minWidth: "90px",
+    cursor: "pointer",
+    color: "#fff",
+    fontSize: "0.75rem",
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  previewLogoImg: {
+    width: "36px",
+    height: "36px",
+    objectFit: "contain",
+  },
+  previewLogoPlaceholder: {
+    fontSize: "1.5rem",
+    lineHeight: 1,
+  },
+  listaPresets: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  filaPreset: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+    backgroundColor: "#1e202b",
+    border: "1px solid #2d303f",
+    borderRadius: "8px",
+    padding: "8px 12px",
+  },
+  nombrePreset: {
+    fontWeight: "700",
+    fontSize: "0.9rem",
+  },
+  minutosPreset: {
+    fontWeight: "500",
+    color: "#9ca3af",
+  },
+  botonesPreset: {
+    display: "flex",
+    gap: "6px",
+    flexShrink: 0,
+  },
+  btnEliminarPreset: {
+    backgroundColor: "#374151",
+    border: "none",
+    borderRadius: "6px",
+    padding: "8px 10px",
+    cursor: "pointer",
+    fontSize: "0.9rem",
   },
   btnNotaRapida: {
     backgroundColor: "#1e202b",

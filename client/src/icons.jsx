@@ -330,3 +330,40 @@ export function IconOndas({ size = 18, color = "currentColor" }) {
     </>,
   );
 }
+
+export function IconPersona({ size = 18, color = "currentColor" }) {
+  // Una sola persona (reemplazo de 🙏/pastor)
+  return base(
+    size,
+    color,
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21v-1a7 7 0 0 1 14 0v1" />
+    </>,
+  );
+}
+
+export function IconGrupo({ size = 18, color = "currentColor" }) {
+  // Varias personas (reemplazo de 👥/líder)
+  return base(
+    size,
+    color,
+    <>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1" />
+      <circle cx="17.5" cy="8.5" r="2.6" />
+      <path d="M15.8 12.2A5 5 0 0 1 21 17v1h-2" />
+    </>,
+  );
+}
+
+export function IconFlechaDerecha({ size = 18, color = "currentColor" }) {
+  return base(
+    size,
+    color,
+    <>
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </>,
+  );
+}

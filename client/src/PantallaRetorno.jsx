@@ -270,7 +270,7 @@ function PantallaRetornoEmisor({ alSalir }) {
   const iniciarRegresiva = (minutosOverride) => {
     const minutos =
       typeof minutosOverride === "number" ? minutosOverride : minutosInput;
-    const duracionSegundos = Math.max(1, Math.round(minutos * 60));
+    const duracionSegundos = Math.max(1, Math.round((Number(minutos) || 0) * 60));
     enviar({
       temporizador: {
         activo: true,
@@ -545,9 +545,10 @@ function PantallaRetornoEmisor({ alSalir }) {
                     type="number"
                     min="1"
                     value={minutosInput}
-                    onChange={(e) =>
-                      setMinutosInput(Number(e.target.value) || 1)
-                    }
+                    onChange={(e) => {
+                      const valor = e.target.value;
+                      setMinutosInput(valor === "" ? "" : Number(valor));
+                    }}
                     style={estilosEmisor.inputMinutos}
                   />
                   <button
@@ -663,9 +664,10 @@ function PantallaRetornoEmisor({ alSalir }) {
                 type="number"
                 min="1"
                 value={presetMinutosInput}
-                onChange={(e) =>
-                  setPresetMinutosInput(Number(e.target.value) || 1)
-                }
+                onChange={(e) => {
+                  const valor = e.target.value;
+                  setPresetMinutosInput(valor === "" ? "" : Number(valor));
+                }}
                 style={estilosEmisor.inputMinutos}
               />
               <button style={estilosEmisor.btnAccion} onClick={agregarPreset}>

@@ -1,12 +1,6 @@
 import React, { useState } from "react";
 import { SERVER_URL } from "./config";
 import { obtenerToken, borrarToken, guardarToken } from "./services/auth";
-// Importamos el logo como módulo de Vite: así Vite lo empaqueta en el build
-// y genera automáticamente la URL pública correcta (con hash de caché).
-// Antes era una ruta de texto ("client/src/logo MM.jpeg") que el navegador
-// no podía resolver porque Vite no sirve la carpeta src/ como archivos
-// estáticos; por eso el logo nunca se veía en producción.
-import LOGO_URL from "./logo MM.jpeg";
 import { IconOjo, IconOjoTachado } from "./icons";
 
 export default function Login({ alIniciarSesion }) {
@@ -55,24 +49,91 @@ export default function Login({ alIniciarSesion }) {
 
   return (
     <div style={styles.container}>
-      <div style={styles.card}>
-        <div style={styles.logoArea}>
-          {LOGO_URL ? (
-            <img src={LOGO_URL} alt="Logo" style={styles.logoImg} />
-          ) : (
-            <div style={styles.logoTexto}>
-              <span style={styles.logoLinea1}>CREW</span>
-              <span style={styles.logoLinea2}>MULTIMEDIA</span>
-            </div>
-          )}
+      {/* Estilos responsive: en pantallas angostas (celular) se reduce el
+          padding, el tamaño de fuente y el ancho máximo del formulario.
+          Todo lo demás (colores, layout) es fluido por sí solo. */}
+      <style>{`
+        @media (max-width: 640px) {
+          .login-crew-content {
+            max-width: 280px !important;
+            padding: 1.25rem !important;
+          }
+          .login-crew-titulo {
+            font-size: 13px !important;
+          }
+          .login-crew-boton {
+            height: 42px !important;
+            font-size: 12px !important;
+          }
+        }
+        @media (max-width: 380px) {
+          .login-crew-content {
+            max-width: 100% !important;
+          }
+        }
+      `}</style>
+
+      {/* Fondo geométrico oscuro con acento rojo — se estira a cualquier
+          tamaño de pantalla gracias a preserveAspectRatio="xMidYMid slice" */}
+      <svg
+        viewBox="0 0 800 520"
+        preserveAspectRatio="xMidYMid slice"
+        style={styles.fondoSvg}
+        aria-hidden="true"
+      >
+        <rect width="800" height="520" fill="#0a0a0a" />
+        <polygon points="0,0 340,0 120,520 0,520" fill="#141414" />
+        <polygon points="800,520 460,520 680,0 800,0" fill="#141414" />
+        <polygon
+          points="800,520 620,520 800,240"
+          fill="#E11D2E"
+          opacity="0.9"
+        />
+        <polygon points="0,0 180,0 0,220" fill="#E11D2E" opacity="0.15" />
+        <line
+          x1="340"
+          y1="0"
+          x2="120"
+          y2="520"
+          stroke="#2a2a2a"
+          strokeWidth="2"
+        />
+        <line
+          x1="680"
+          y1="0"
+          x2="460"
+          y2="520"
+          stroke="#2a2a2a"
+          strokeWidth="2"
+        />
+      </svg>
+
+      <div className="login-crew-content" style={styles.content}>
+        <div style={styles.logoLockup}>
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#fff"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M23 7l-7 5 7 5V7z" />
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+          </svg>
+          <span style={styles.logoTexto}>crew</span>
+          <span style={styles.logoIcad}>ICAD</span>
         </div>
 
-        <h1 style={styles.titulo}>COMUNICACIÓN MM ICAD</h1>
-        <p style={styles.subtitulo}>Inicia sesión para continuar</p>
+        <p className="login-crew-titulo" style={styles.subtitulo}>
+          Inicia sesión para continuar
+        </p>
 
         <form onSubmit={manejarEnvio} style={styles.form}>
           <div style={styles.campo}>
-            <label style={styles.etiqueta}>Usuario</label>
             <input
               type="text"
               value={usuario}
@@ -84,41 +145,32 @@ export default function Login({ alIniciarSesion }) {
             />
           </div>
 
-          <div style={styles.campo}>
-            <label style={styles.etiqueta}>Contraseña</label>
-            <div style={styles.contenedorInputContrasena}>
-              <input
-                type={mostrarContrasena ? "text" : "password"}
-                value={contrasena}
-                onChange={(e) => setContrasena(e.target.value)}
-                placeholder="Contraseña"
-                autoComplete="current-password"
-                style={styles.inputContrasena}
-                disabled={cargando}
-              />
-              <button
-                type="button"
-                onClick={() => setMostrarContrasena((prev) => !prev)}
-                style={styles.btnVerContrasena}
-                disabled={cargando}
-                aria-label={
-                  mostrarContrasena
-                    ? "Ocultar contraseña"
-                    : "Mostrar contraseña"
-                }
-                title={
-                  mostrarContrasena
-                    ? "Ocultar contraseña"
-                    : "Mostrar contraseña"
-                }
-              >
-                {mostrarContrasena ? (
-                  <IconOjoTachado size={19} color="#9ca3af" />
-                ) : (
-                  <IconOjo size={19} color="#9ca3af" />
-                )}
-              </button>
-            </div>
+          <div style={styles.campoContrasena}>
+            <input
+              type={mostrarContrasena ? "text" : "password"}
+              value={contrasena}
+              onChange={(e) => setContrasena(e.target.value)}
+              placeholder="Contraseña"
+              autoComplete="current-password"
+              style={styles.inputContrasena}
+              disabled={cargando}
+            />
+            <button
+              type="button"
+              onClick={() => setMostrarContrasena((prev) => !prev)}
+              style={styles.btnVerContrasena}
+              disabled={cargando}
+              aria-label={
+                mostrarContrasena ? "Ocultar contraseña" : "Mostrar contraseña"
+              }
+              title={mostrarContrasena ? "Ocultar contraseña" : "Mostrar contraseña"}
+            >
+              {mostrarContrasena ? (
+                <IconOjoTachado size={16} color="rgba(255,255,255,0.6)" />
+              ) : (
+                <IconOjo size={16} color="rgba(255,255,255,0.6)" />
+              )}
+            </button>
           </div>
 
           {error && <p style={styles.mensajeError}>{error}</p>}
@@ -126,15 +178,18 @@ export default function Login({ alIniciarSesion }) {
           <button
             type="submit"
             disabled={cargando}
+            className="login-crew-boton"
             style={{
               ...styles.btnEntrar,
               opacity: cargando ? 0.6 : 1,
               cursor: cargando ? "not-allowed" : "pointer",
             }}
           >
-            {cargando ? "Verificando..." : "ENTRAR"}
+            {cargando ? "VERIFICANDO..." : "ENTRAR"}
           </button>
         </form>
+
+        <p style={styles.pie}>Acceso exclusivo para el equipo de producción</p>
       </div>
     </div>
   );
@@ -142,146 +197,131 @@ export default function Login({ alIniciarSesion }) {
 
 const styles = {
   container: {
-    backgroundColor: "#0a0a0a",
+    position: "relative",
     minHeight: "100vh",
-    width: "100vw",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: "20px",
-    boxSizing: "border-box",
-    fontFamily: "Arial, sans-serif",
-  },
-  card: {
-    backgroundColor: "#1e1e1e",
-    borderRadius: "12px",
-    padding: "36px 30px",
     width: "100%",
-    maxWidth: "380px",
-    boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+    overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0a0a0a",
     boxSizing: "border-box",
+    fontFamily:
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif",
+  },
+  fondoSvg: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    zIndex: 0,
+  },
+  content: {
+    position: "relative",
+    zIndex: 1,
+    width: "100%",
+    maxWidth: "320px",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
+    padding: "2rem",
+    boxSizing: "border-box",
   },
-  logoArea: {
-    marginBottom: "20px",
+  logoLockup: {
     display: "flex",
-    justifyContent: "center",
-  },
-  logoImg: {
-    width: "120px",
-    height: "120px",
-    borderRadius: "50%",
-    objectFit: "cover",
-    border: "2px solid #333",
+    alignItems: "center",
+    gap: "6px",
+    marginBottom: "32px",
   },
   logoTexto: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    lineHeight: 1.1,
-  },
-  logoLinea1: {
-    fontSize: "1.6rem",
-    fontWeight: "900",
+    fontSize: "15px",
+    fontWeight: 500,
     color: "#fff",
-    letterSpacing: "2px",
+    letterSpacing: "0.5px",
   },
-  logoLinea2: {
-    fontSize: "0.95rem",
-    fontWeight: "bold",
-    color: "#0052cc",
-    letterSpacing: "3px",
-    marginTop: "2px",
-  },
-  titulo: {
-    fontSize: "1.3rem",
-    fontWeight: "900",
-    color: "#fff",
-    margin: "4px 0 4px 0",
-    textAlign: "center",
+  logoIcad: {
+    fontSize: "10px",
+    fontWeight: 500,
+    color: "#E11D2E",
   },
   subtitulo: {
-    fontSize: "0.85rem",
-    color: "#888",
-    margin: "0 0 24px 0",
+    fontSize: "13px",
+    color: "#ccc",
+    margin: "0 0 28px 0",
     textAlign: "center",
   },
   form: {
     width: "100%",
     display: "flex",
     flexDirection: "column",
-    gap: "14px",
   },
   campo: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
+    width: "100%",
+    marginBottom: "22px",
   },
-  etiqueta: {
-    fontSize: "0.78rem",
-    color: "#aaa",
-    fontWeight: "bold",
-    letterSpacing: "0.4px",
+  campoContrasena: {
+    width: "100%",
+    marginBottom: "10px",
+    position: "relative",
   },
   input: {
-    backgroundColor: "#141414",
-    border: "1px solid #333",
-    borderRadius: "8px",
+    width: "100%",
+    background: "transparent",
+    border: "none",
+    borderBottom: "1px solid rgba(255,255,255,0.3)",
     color: "#fff",
-    padding: "12px",
-    fontSize: "1rem",
+    padding: "0 0 10px 0",
+    fontSize: "14px",
     outline: "none",
     boxSizing: "border-box",
-  },
-  contenedorInputContrasena: {
-    position: "relative",
-    display: "flex",
-    alignItems: "center",
   },
   inputContrasena: {
-    backgroundColor: "#141414",
-    border: "1px solid #333",
-    borderRadius: "8px",
+    width: "100%",
+    background: "transparent",
+    border: "none",
+    borderBottom: "1px solid rgba(255,255,255,0.3)",
     color: "#fff",
-    padding: "12px",
-    paddingRight: "44px", // deja espacio para el botón del ojo
-    fontSize: "1rem",
+    padding: "0 26px 10px 0",
+    fontSize: "14px",
     outline: "none",
     boxSizing: "border-box",
-    width: "100%",
   },
   btnVerContrasena: {
     position: "absolute",
-    right: "6px",
-    top: "50%",
-    transform: "translateY(-50%)",
+    right: 0,
+    bottom: "6px",
     background: "none",
     border: "none",
     cursor: "pointer",
-    fontSize: "1.1rem",
-    padding: "6px",
+    padding: "4px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     lineHeight: 1,
   },
   mensajeError: {
-    color: "#ff5c5c",
-    fontSize: "0.85rem",
-    margin: 0,
+    color: "#ff6b6b",
+    fontSize: "12px",
+    margin: "0 0 14px 0",
     textAlign: "center",
   },
   btnEntrar: {
     width: "100%",
-    padding: "14px",
-    backgroundColor: "#0052cc",
+    height: "44px",
+    background: "#E11D2E",
     color: "#fff",
     border: "none",
-    borderRadius: "8px",
-    fontSize: "1.05rem",
-    fontWeight: "bold",
-    marginTop: "6px",
+    borderRadius: "24px",
+    fontSize: "13px",
+    fontWeight: 500,
+    letterSpacing: "1px",
+    marginTop: "12px",
+  },
+  pie: {
+    textAlign: "center",
+    fontSize: "11px",
+    color: "rgba(255,255,255,0.45)",
+    margin: "20px 0 0 0",
   },
 };

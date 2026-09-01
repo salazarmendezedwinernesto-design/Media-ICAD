@@ -120,39 +120,52 @@ export default function PantallaRetorno({ alSalir }) {
 
   return (
     <div style={estilosMenu.container}>
+      <svg
+        viewBox="0 0 800 560"
+        preserveAspectRatio="xMidYMid slice"
+        style={estilosMenu.fondoSvg}
+        aria-hidden="true"
+      >
+        <rect width="800" height="560" fill="#0a0a0a" />
+        <polygon points="0,0 340,0 120,560 0,560" fill="#141414" />
+        <polygon points="800,560 460,560 680,0 800,0" fill="#141414" />
+        <polygon points="800,560 620,560 800,280" fill="#E11D2E" opacity="0.9" />
+        <polygon points="0,0 180,0 0,220" fill="#E11D2E" opacity="0.15" />
+      </svg>
+
       <header style={estilosMenu.navbar}>
         <button style={estilosMenu.btnVolver} onClick={alSalir}>
           ⬅️ Menú
         </button>
-        <h1 style={estilosMenu.navTitle}>🖥️ PANTALLA DE RETORNO</h1>
         <div style={{ width: 70 }} />
       </header>
 
       <main style={estilosMenu.opciones}>
         <p style={estilosMenu.descripcion}>
-          Monitor de confianza para el escenario (como en ProPresenter, FreeShow
-          u Holyrics): reloj, cronómetro/cuenta regresiva y notas cortas para
-          quienes están en tarima.
+          Monitor de confianza para el escenario: reloj, cronómetro/cuenta
+          regresiva y notas cortas para quienes están en tarima.
         </p>
 
-        <button
-          style={{ ...estilosMenu.btnOpcion, backgroundColor: "#2563eb" }}
-          onClick={() => setModo("emisor")}
-        >
-          🎛️ EMISOR
-          <span style={estilosMenu.subtexto}>
-            Controla qué se muestra (operador de pantalla)
+        <button style={estilosMenu.btnOpcion} onClick={() => setModo("emisor")}>
+          <span style={estilosMenu.iconoOpcion}>🖥️</span>
+          <span style={estilosMenu.textoOpcion}>
+            <span style={estilosMenu.tituloOpcion}>Emisor</span>
+            <span style={estilosMenu.subtexto}>
+              Controla qué se muestra (operador de pantalla)
+            </span>
           </span>
+          <span style={estilosMenu.flechaOpcion}>›</span>
         </button>
 
-        <button
-          style={{ ...estilosMenu.btnOpcion, backgroundColor: "#16a34a" }}
-          onClick={() => setModo("receptor")}
-        >
-          📺 RECEPTOR
-          <span style={estilosMenu.subtexto}>
-            Monitor real que va en el escenario (pantalla completa)
+        <button style={estilosMenu.btnOpcion} onClick={() => setModo("receptor")}>
+          <span style={estilosMenu.iconoOpcion}>📺</span>
+          <span style={estilosMenu.textoOpcion}>
+            <span style={estilosMenu.tituloOpcion}>Receptor</span>
+            <span style={estilosMenu.subtexto}>
+              Monitor real que va en el escenario (pantalla completa)
+            </span>
           </span>
+          <span style={estilosMenu.flechaOpcion}>›</span>
         </button>
       </main>
     </div>
@@ -1019,69 +1032,104 @@ const ESTILOS_ANIMACION = `
 
 const estilosMenu = {
   container: {
-    backgroundColor: "#0b0c10",
+    position: "relative",
+    backgroundColor: "#0a0a0a",
     color: "#fff",
     minHeight: "100vh",
     width: "100vw",
     display: "flex",
     flexDirection: "column",
-    fontFamily: "system-ui, sans-serif",
+    fontFamily:
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif",
     padding: "16px",
     boxSizing: "border-box",
+    overflow: "hidden",
+  },
+  fondoSvg: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    zIndex: 0,
   },
   navbar: {
+    position: "relative",
+    zIndex: 1,
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    borderBottom: "1px solid #1f2937",
     paddingBottom: "10px",
     marginBottom: "20px",
   },
   btnVolver: {
-    backgroundColor: "#1f2937",
+    backgroundColor: "rgba(255,255,255,0.08)",
     color: "#fff",
     border: "none",
     borderRadius: "6px",
     cursor: "pointer",
-    fontWeight: "bold",
+    fontWeight: "500",
     padding: "8px 14px",
-  },
-  navTitle: {
-    margin: 0,
-    fontSize: "1.05rem",
-    fontWeight: "800",
-    color: "#9ca3af",
+    fontSize: "13px",
   },
   opciones: {
+    position: "relative",
+    zIndex: 1,
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    gap: "16px",
+    gap: "14px",
     justifyContent: "center",
-    maxWidth: 480,
+    maxWidth: 420,
     margin: "0 auto",
     width: "100%",
   },
   descripcion: {
-    color: "#6b7280",
-    fontSize: "0.9rem",
+    color: "rgba(255,255,255,0.45)",
+    fontSize: "13px",
     textAlign: "center",
-    marginBottom: "10px",
+    marginBottom: "18px",
     lineHeight: 1.5,
   },
   btnOpcion: {
-    border: "none",
-    borderRadius: "12px",
-    padding: "20px",
+    borderLeft: "3px solid #E11D2E",
+    borderRadius: "0 8px 8px 0",
+    backgroundColor: "#141414",
+    padding: "16px 18px",
     color: "#fff",
-    fontSize: "1.2rem",
-    fontWeight: "800",
     cursor: "pointer",
     display: "flex",
-    flexDirection: "column",
-    gap: "6px",
+    alignItems: "center",
+    gap: "12px",
+    width: "100%",
+    boxSizing: "border-box",
+    textAlign: "left",
   },
-  subtexto: { fontSize: "0.8rem", fontWeight: "500", opacity: 0.85 },
+  iconoOpcion: {
+    fontSize: "18px",
+    flexShrink: 0,
+  },
+  textoOpcion: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    flex: 1,
+  },
+  tituloOpcion: {
+    fontSize: "15px",
+    fontWeight: 500,
+    color: "#fff",
+  },
+  flechaOpcion: {
+    fontSize: "18px",
+    color: "rgba(255,255,255,0.35)",
+    flexShrink: 0,
+  },
+  subtexto: {
+    fontSize: "12px",
+    fontWeight: 400,
+    color: "rgba(255,255,255,0.45)",
+  },
 };
 
 const estilosEmisor = {

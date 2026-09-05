@@ -71,6 +71,19 @@ export default function Login({ alIniciarSesion }) {
             max-width: 100% !important;
           }
         }
+        @keyframes girarSpinner {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .login-crew-spinner {
+          width: 13px;
+          height: 13px;
+          border: 2px solid rgba(255,255,255,0.35);
+          border-top-color: #fff;
+          border-radius: 50%;
+          display: inline-block;
+          animation: girarSpinner 0.6s linear infinite;
+        }
       `}</style>
 
       {/* Fondo geométrico oscuro con acento rojo — se estira a cualquier
@@ -163,7 +176,9 @@ export default function Login({ alIniciarSesion }) {
               aria-label={
                 mostrarContrasena ? "Ocultar contraseña" : "Mostrar contraseña"
               }
-              title={mostrarContrasena ? "Ocultar contraseña" : "Mostrar contraseña"}
+              title={
+                mostrarContrasena ? "Ocultar contraseña" : "Mostrar contraseña"
+              }
             >
               {mostrarContrasena ? (
                 <IconOjoTachado size={16} color="rgba(255,255,255,0.6)" />
@@ -185,7 +200,14 @@ export default function Login({ alIniciarSesion }) {
               cursor: cargando ? "not-allowed" : "pointer",
             }}
           >
-            {cargando ? "VERIFICANDO..." : "ENTRAR"}
+            {cargando ? (
+              <span style={styles.contenidoBoton}>
+                <span className="login-crew-spinner" />
+                VERIFICANDO...
+              </span>
+            ) : (
+              "ENTRAR"
+            )}
           </button>
         </form>
 
@@ -305,6 +327,12 @@ const styles = {
     fontSize: "12px",
     margin: "0 0 14px 0",
     textAlign: "center",
+  },
+  contenidoBoton: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
   },
   btnEntrar: {
     width: "100%",

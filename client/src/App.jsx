@@ -39,10 +39,35 @@ function FondoCrew() {
   );
 }
 
-// Una fila del menú: ícono a la izquierda, texto, flecha a la derecha.
-function FilaMenu({ icono, texto, onClick }) {
+// Keyframes para la animación de entrada del menú tras iniciar sesión.
+// Sutil y rápida: un fade + pequeño desplazamiento hacia arriba.
+function AnimacionesEntrada() {
   return (
-    <button style={estilos.filaMenu} onClick={onClick}>
+    <style>{`
+      @keyframes entrarMenu {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes entrarFila {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    `}</style>
+  );
+}
+
+// Una fila del menú: ícono a la izquierda, texto, flecha a la derecha.
+// "indice" controla el pequeño retraso escalonado (stagger) al aparecer.
+function FilaMenu({ icono, texto, onClick, indice = 0 }) {
+  return (
+    <button
+      style={{
+        ...estilos.filaMenu,
+        animation: "entrarFila 260ms ease-out both",
+        animationDelay: `${80 + indice * 45}ms`,
+      }}
+      onClick={onClick}
+    >
       <span style={estilos.filaIcono}>{icono}</span>
       <span style={estilos.filaTexto}>{texto}</span>
       <span style={estilos.filaFlecha}>
@@ -93,7 +118,13 @@ export default function App() {
     return (
       <div style={estilos.container}>
         <FondoCrew />
-        <div style={estilos.contenido}>
+        <AnimacionesEntrada />
+        <div
+          style={{
+            ...estilos.contenido,
+            animation: "entrarMenu 300ms ease-out both",
+          }}
+        >
           <div style={estilos.encabezado}>
             <div style={estilos.logoLockup}>
               <IconCamara size={16} color="#fff" />
@@ -105,11 +136,13 @@ export default function App() {
 
           <div style={estilos.listaMenu}>
             <FilaMenu
+              indice={0}
               icono={<IconEmisora size={18} color="#E11D2E" />}
               texto="Comunicación de pantalla"
               onClick={() => setSubPantalla("comunicacion")}
             />
             <FilaMenu
+              indice={1}
               icono={<IconPantalla size={18} color="#E11D2E" />}
               texto="Pantalla de retorno"
               onClick={() => setSubPantalla("retorno")}
@@ -146,7 +179,13 @@ export default function App() {
   return (
     <div style={estilos.container}>
       <FondoCrew />
-      <div style={estilos.contenido}>
+      <AnimacionesEntrada />
+      <div
+        style={{
+          ...estilos.contenido,
+          animation: "entrarMenu 300ms ease-out both",
+        }}
+      >
         <div style={estilos.encabezado}>
           <div style={estilos.logoLockup}>
             <IconCamara size={16} color="#fff" />
@@ -158,26 +197,31 @@ export default function App() {
 
         <div style={estilos.listaMenu}>
           <FilaMenu
+            indice={0}
             icono={<IconPersona size={18} color="#E11D2E" />}
             texto="Panel del pastor"
             onClick={() => setRol("pastor")}
           />
           <FilaMenu
+            indice={1}
             icono={<IconGrupo size={18} color="#E11D2E" />}
             texto="Panel de líder"
             onClick={() => setRol("lider")}
           />
           <FilaMenu
+            indice={2}
             icono={<IconCamara size={18} color="#E11D2E" />}
             texto="Operador / director"
             onClick={() => setRol("director")}
           />
           <FilaMenu
+            indice={3}
             icono={<IconPantalla size={18} color="#E11D2E" />}
             texto="Operador de pantalla"
             onClick={() => setRol("pantalla")}
           />
           <FilaMenu
+            indice={4}
             icono={<IconEmisora size={18} color="#E11D2E" />}
             texto="Panel de moderador"
             onClick={() => setRol("moderador")}

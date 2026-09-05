@@ -5,14 +5,23 @@ import { obtenerToken, borrarToken } from "./services/auth";
 import BarraTransmision from "./BarraTransmision";
 import EnlaceExterno from "./EnlaceExterno";
 import EnlaceReunion from "./EnlaceReunion";
+import {
+  IconCheck,
+  IconBateria,
+  IconMano,
+  IconOreja,
+  IconMensajeBurbuja,
+  IconChevronAbajo,
+  IconX,
+} from "./icons";
 
 const SOCKET_URL = SERVER_URL;
 
 const MENSAJES_RAPIDOS_CAMARA = [
-  "✅ LISTA",
-  "🔋 BATERÍA BAJA",
-  "🙋 NECESITO AYUDA",
-  "🎙️ PROBLEMA DE AUDIO",
+  { texto: "LIST@", Icono: IconCheck, color: "#3ddc84" },
+  { texto: "BATERÍA BAJA", Icono: IconBateria, color: "#ffcc00" },
+  { texto: "AYUDA", Icono: IconMano, color: "#ff5555" },
+  { texto: "NO TE ESCUCHO BIEN", Icono: IconOreja, color: "#9aa0a6" },
 ];
 
 export default function Camara({ numero, alSalir }) {
@@ -24,7 +33,15 @@ export default function Camara({ numero, alSalir }) {
   const [textoLibre, setTextoLibre] = useState("");
   const [confirmacion, setConfirmacion] = useState("");
   const [responderA, setResponderA] = useState("Director"); // Destinatario por defecto
+  const [panelAbierto, setPanelAbierto] = useState(true);
+  const [bateria, setBateria] = useState(null);
+
+  // Animacion del banner de mensaje: "entrando" | "visible" | "saliendo" | null
+  const [bannerAnim, setBannerAnim] = useState(null);
+  const bannerTimeoutRef = useRef(null);
+
   const socketRef = useRef(null);
+  const touchStartYRef = useRef(null);
 
   useEffect(() => {
     const socket = io(SOCKET_URL, {
@@ -98,6 +115,57 @@ export default function Camara({ numero, alSalir }) {
     };
   }, [numero]);
 
+  // Lectura best-effort de la batería del celular (Chrome/Android). Si el
+  // navegador no soporta la API (iOS Safari, Firefox, etc.) simplemente no
+  // se muestra el indicador.
+  useEffect(() => {
+    let bateriaRef = null;
+    let activo = true;
+
+    const actualizar = () => {
+      if (bateriaRef && activo) {
+        setBateria(Math.round(bateriaRef.level * 100));
+      }
+    };
+
+    if (navigator.getBattery) {
+      navigator.getBattery().then((b) => {
+        if (!activo) return;
+        bateriaRef = b;
+        actualizar();
+        b.addEventListener("levelchange", actualizar);
+      });
+    }
+
+    return () => {
+      activo = false;
+      if (bateriaRef) bateriaRef.removeEventListener("levelchange", actualizar);
+    };
+  }, []);
+
+  // Dispara la animación de entrada cuando llega un mensaje nuevo, y deja
+  // el estado en "visible" una vez que termina la transición de entrada.
+  useEffect(() => {
+    if (tally.mensaje) {
+      clearTimeout(bannerTimeoutRef.current);
+      setBannerAnim("entrando");
+      bannerTimeoutRef.current = setTimeout(() => {
+        setBannerAnim("visible");
+      }, 350);
+    } else {
+      setBannerAnim(null);
+    }
+    return () => clearTimeout(bannerTimeoutRef.current);
+  }, [tally.mensaje]);
+
+  const cerrarBanner = () => {
+    setBannerAnim("saliendo");
+    clearTimeout(bannerTimeoutRef.current);
+    bannerTimeoutRef.current = setTimeout(() => {
+      setTally((prev) => ({ ...prev, mensaje: "" }));
+    }, 280);
+  };
+
   const enviarMensaje = (texto) => {
     if (!texto || !texto.trim()) return;
     if (socketRef.current) {
@@ -122,19 +190,77 @@ export default function Camara({ numero, alSalir }) {
     setTimeout(() => setConfirmacion(""), 2000);
   };
 
+  // Gestos para deslizar el panel hacia arriba (abrir) o hacia abajo (cerrar)
+  // desde el tirador. Un tap simple sobre el tirador también alterna.
+  const alTocarTirador = (e) => {
+    touchStartYRef.current = e.touches[0].clientY;
+  };
+  const alSoltarTirador = (e) => {
+    if (touchStartYRef.current === null) return;
+    const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
+    touchStartYRef.current = null;
+    if (deltaY > 25)
+      setPanelAbierto(false); // deslizó hacia abajo
+    else if (deltaY < -25)
+      setPanelAbierto(true); // deslizó hacia arriba
+    else setPanelAbierto((prev) => !prev); // fue un tap
+  };
+
   const getFondoColor = () => {
-    if (tally.estado === "live") return "#ff0000";
-    if (tally.estado === "preview") return "#00cc44";
-    return "#1a1a1a";
+    if (tally.estado === "live") return "#c0182b";
+    if (tally.estado === "preview") return "#0e9f6e";
+    return "#17181c";
+  };
+
+  const getEstadoTexto = () => {
+    if (tally.estado === "live") return "AL AIRE";
+    if (tally.estado === "preview") return "PREVIO";
+    return "ESPERA";
   };
 
   return (
     <div style={{ ...styles.viewport, backgroundColor: getFondoColor() }}>
+      <style>{`
+        @keyframes entradaBanner {
+          from { opacity: 0; transform: translateY(-14px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes salidaBanner {
+          from { opacity: 1; transform: translateY(0); }
+          to { opacity: 0; transform: translateY(-14px); }
+        }
+        @keyframes pulsoEnVivo {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.45; transform: scale(1.3); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+        .banner-entrando { animation: entradaBanner 0.32s ease-out both; }
+        .banner-saliendo { animation: salidaBanner 0.26s ease-in both; }
+        .punto-estado-vivo { animation: pulsoEnVivo 1.4s infinite ease-in-out; }
+        .panel-camara {
+          transition: max-height 0.32s ease, opacity 0.28s ease;
+          overflow: hidden;
+        }
+        .selector-destino-camara {
+          appearance: none;
+          -webkit-appearance: none;
+        }
+      `}</style>
+
       <div style={styles.headerArea}>
-        <div style={styles.confirmacionEnvio}>{confirmacion}</div>
-        <div style={{ display: "flex", gap: "8px" }}>
+        <span style={styles.camLabelChico}>CAM {numero}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {confirmacion && (
+            <span style={styles.confirmacionEnvio}>{confirmacion}</span>
+          )}
+          {bateria !== null && (
+            <span style={styles.bateriaChip}>
+              <IconBateria size={14} color="rgba(255,255,255,0.85)" />
+              {bateria}%
+            </span>
+          )}
           <button style={styles.btnSalir} onClick={alSalir}>
-            ✕ SALIR
+            <IconX size={14} color="#fff" />
           </button>
         </div>
       </div>
@@ -144,65 +270,89 @@ export default function Camara({ numero, alSalir }) {
       <EnlaceReunion />
 
       <div style={styles.mainTallyArea}>
-        <h1 style={styles.camLabel}>CAM {numero}</h1>
-        <h2 style={styles.estadoLabel}>
-          {tally.estado === "live"
-            ? "¡AL AIRE!"
-            : tally.estado === "preview"
-              ? "PREVIO"
-              : "ESPERA"}
-        </h2>
+        <span
+          className={tally.estado === "live" ? "punto-estado-vivo" : ""}
+          style={styles.puntoEstado}
+        />
+        <h1 style={styles.estadoLabel}>{getEstadoTexto()}</h1>
+        <p style={styles.subtituloEstado}>
+          Cámara {numero} · {tally.de}
+        </p>
       </div>
 
       {tally.mensaje && (
-        <div style={styles.bannerMensaje}>
-          <div style={styles.marqueeText}>
-            <span style={{ color: "#ffcc00", fontWeight: "900" }}>
-              {tally.de}:{" "}
-            </span>
-            {tally.mensaje}
+        <div
+          className={
+            bannerAnim === "entrando"
+              ? "banner-entrando"
+              : bannerAnim === "saliendo"
+                ? "banner-saliendo"
+                : ""
+          }
+          style={styles.bannerMensaje}
+        >
+          <IconMensajeBurbuja size={18} color="#ffcc00" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={styles.bannerDe}>{tally.de}</div>
+            <div style={styles.bannerTexto}>{tally.mensaje}</div>
           </div>
-          <button
-            onClick={() => setTally((prev) => ({ ...prev, mensaje: "" }))}
-            style={styles.btnCerrarBanner}
-          >
-            ✕
+          <button onClick={cerrarBanner} style={styles.btnCerrarBanner}>
+            <IconX size={14} color="rgba(255,255,255,0.7)" />
           </button>
         </div>
       )}
 
-      {/* PANEL DE RESPUESTA INTERACTIVO */}
-      <div style={styles.panelEnvio}>
+      {/* PANEL DE RESPUESTA DESPLEGABLE */}
+      <div
+        className="panel-camara"
+        style={{
+          ...styles.panelEnvio,
+          maxHeight: panelAbierto ? "420px" : "34px",
+          opacity: panelAbierto ? 1 : 0.9,
+        }}
+      >
+        <div
+          style={styles.tirador}
+          onClick={() => setPanelAbierto((prev) => !prev)}
+          onTouchStart={alTocarTirador}
+          onTouchEnd={alSoltarTirador}
+        >
+          <span style={styles.tiradorBarra} />
+        </div>
+
         <div
           style={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: "8px",
+            marginBottom: "10px",
           }}
         >
-          <span style={{ color: "#aaa", fontSize: "0.8rem" }}>
-            Responder a:
-          </span>
-          <select
-            value={responderA}
-            onChange={(e) => setResponderA(e.target.value)}
-            style={styles.selectorDestino}
-          >
-            <option value="Director">Director</option>
-            <option value="Pastor">Pastor</option>
-            <option value="Lider">Líder</option>
-          </select>
+          <span style={{ color: "#aaa", fontSize: "0.8rem" }}>Responder a</span>
+          <div style={styles.selectorWrap}>
+            <select
+              value={responderA}
+              onChange={(e) => setResponderA(e.target.value)}
+              className="selector-destino-camara"
+              style={styles.selectorDestino}
+            >
+              <option value="Director">Director</option>
+              <option value="Pastor">Pastor</option>
+              <option value="Lider">Líder</option>
+            </select>
+            <IconChevronAbajo size={13} color="#fff" />
+          </div>
         </div>
 
         <div style={styles.gridMensajesRapidos}>
-          {MENSAJES_RAPIDOS_CAMARA.map((txt) => (
+          {MENSAJES_RAPIDOS_CAMARA.map(({ texto, Icono, color }) => (
             <button
-              key={txt}
-              onClick={() => enviarMensaje(txt)}
+              key={texto}
+              onClick={() => enviarMensaje(texto)}
               style={styles.btnMensajeRapido}
             >
-              {txt}
+              <Icono size={16} color={color} />
+              <span>{texto}</span>
             </button>
           ))}
         </div>
@@ -223,7 +373,7 @@ export default function Camara({ numero, alSalir }) {
             style={styles.inputLibre}
           />
           <button type="submit" style={styles.btnEnviarLibre}>
-            🛩️
+            ➤
           </button>
         </form>
       </div>
@@ -248,98 +398,159 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
   },
+  camLabelChico: {
+    fontSize: "0.8rem",
+    fontWeight: "700",
+    letterSpacing: "0.5px",
+    color: "rgba(255,255,255,0.8)",
+  },
   confirmacionEnvio: {
     color: "#00ffcc",
     fontWeight: "bold",
-    fontSize: "0.9rem",
+    fontSize: "0.8rem",
+  },
+  bateriaChip: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    fontSize: "0.75rem",
+    color: "rgba(255,255,255,0.85)",
+    fontWeight: "600",
   },
   btnSalir: {
     backgroundColor: "rgba(255,255,255,0.15)",
     border: "none",
     color: "#fff",
-    padding: "8px 14px",
-    borderRadius: "6px",
+    padding: "8px",
+    borderRadius: "8px",
     cursor: "pointer",
-    fontWeight: "bold",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   mainTallyArea: {
     textAlign: "center",
     flex: 1,
     display: "flex",
     flexDirection: "column",
+    alignItems: "center",
     justifyContent: "center",
   },
-  camLabel: {
-    fontSize: "clamp(3.5rem, 15vh, 6rem)",
-    margin: 0,
-    fontWeight: "900",
-    letterSpacing: "-1px",
+  puntoEstado: {
+    width: "10px",
+    height: "10px",
+    borderRadius: "50%",
+    backgroundColor: "#fff",
+    display: "inline-block",
+    marginBottom: "12px",
   },
   estadoLabel: {
-    fontSize: "clamp(1.2rem, 5vh, 2.2rem)",
-    margin: "5px 0 0 0",
-    opacity: 0.85,
-    fontWeight: "bold",
+    fontSize: "clamp(2rem, 10vh, 3.4rem)",
+    margin: 0,
+    fontWeight: "700",
+    letterSpacing: "-0.5px",
+  },
+  subtituloEstado: {
+    fontSize: "0.85rem",
+    margin: "6px 0 0 0",
+    color: "rgba(255,255,255,0.7)",
+    fontWeight: "500",
   },
   bannerMensaje: {
-    backgroundColor: "#7a0000",
-    border: "2px solid #ffcc00",
-    borderRadius: "8px",
-    padding: "10px",
+    backgroundColor: "rgba(0,0,0,0.4)",
+    borderRadius: "12px",
+    padding: "10px 12px",
     display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
+    gap: "8px",
     marginBottom: "8px",
   },
-  marqueeText: {
+  bannerDe: {
+    color: "#ffcc00",
+    fontWeight: "700",
+    fontSize: "0.7rem",
+    letterSpacing: "0.4px",
+  },
+  bannerTexto: {
     color: "#fff",
-    fontSize: "1.1rem",
-    fontWeight: "bold",
-    flex: 1,
+    fontSize: "0.95rem",
+    fontWeight: "500",
+    lineHeight: 1.35,
+    marginTop: "2px",
   },
   btnCerrarBanner: {
     background: "none",
     border: "none",
-    color: "#fff",
-    fontSize: "1.1rem",
     cursor: "pointer",
+    display: "flex",
+    alignItems: "flex-start",
+    padding: "2px",
   },
   panelEnvio: {
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
-    borderRadius: "12px",
-    padding: "12px",
-    border: "1px solid #333",
+    backgroundColor: "rgba(20, 20, 22, 0.92)",
+    borderRadius: "20px 20px 0 0",
+    padding: "0 14px 14px",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderBottom: "none",
+  },
+  tirador: {
+    display: "flex",
+    justifyContent: "center",
+    padding: "10px 0 12px",
+    cursor: "pointer",
+    touchAction: "none",
+  },
+  tiradorBarra: {
+    width: "36px",
+    height: "4px",
+    borderRadius: "999px",
+    backgroundColor: "rgba(255,255,255,0.3)",
+  },
+  selectorWrap: {
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    backgroundColor: "#26262a",
+    padding: "5px 10px",
+    borderRadius: "999px",
   },
   selectorDestino: {
-    backgroundColor: "#222",
+    backgroundColor: "transparent",
     color: "#fff",
-    border: "1px solid #444",
-    padding: "4px 8px",
-    borderRadius: "4px",
+    border: "none",
+    fontSize: "0.8rem",
+    fontWeight: "600",
+    cursor: "pointer",
+    outline: "none",
   },
   gridMensajesRapidos: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: "6px",
-    marginBottom: "8px",
+    gap: "8px",
+    marginBottom: "10px",
   },
   btnMensajeRapido: {
-    padding: "12px 4px",
-    backgroundColor: "#222",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "10px 8px",
+    backgroundColor: "#212124",
     color: "#fff",
-    border: "1px solid #444",
-    borderRadius: "6px",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: "10px",
     cursor: "pointer",
-    fontWeight: "bold",
-    fontSize: "0.85rem",
+    fontWeight: "600",
+    fontSize: "0.75rem",
+    textAlign: "left",
   },
   inputLibre: {
     flex: 1,
-    backgroundColor: "#111",
-    border: "1px solid #444",
+    backgroundColor: "#1a1a1c",
+    border: "1px solid rgba(255,255,255,0.1)",
     color: "#fff",
-    padding: "10px",
-    borderRadius: "6px",
+    padding: "10px 12px",
+    borderRadius: "10px",
     outline: "none",
   },
   btnEnviarLibre: {
@@ -347,7 +558,7 @@ const styles = {
     border: "none",
     color: "#fff",
     padding: "0 16px",
-    borderRadius: "6px",
+    borderRadius: "10px",
     cursor: "pointer",
   },
 };

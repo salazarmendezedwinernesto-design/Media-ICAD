@@ -349,8 +349,7 @@ const estilos = {
     margin: 0,
     wordBreak: "break-word",
   },
-  // Grid de dos columnas SIEMPRE fijo (Hora | Mensaje). Ya no depende de
-  // si el reloj está visible, así que nunca se reacomoda.
+
   filaInferior: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",

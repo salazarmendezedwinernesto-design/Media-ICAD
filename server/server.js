@@ -262,9 +262,11 @@ function difundirMensajeBus(datos) {
 // completa. Puede haber varios receptores conectados a la vez (todos
 // reciben lo mismo).
 //
-// Nota importante: por decisión explícita, este panel NO incluye texto
-// bíblico ni letras de alabanza -- solo texto libre que el operador
-// escribe a mano (nota de "siguiente", mensaje personalizado, etc).
+// Holyrics: el Emisor puede pegar el enlace de salida web que genera el
+// plugin/servidor de Holyrics (letras, versículos, imágenes, videos...) y
+// todos los Receptores lo cargan en vivo. El contenido viaja directo de
+// Holyrics al monitor, sin pasar por este servidor (latencia mínima);
+// aquí solo se guarda y reparte el enlace y su disposición en pantalla.
 let pantallaRetorno = {
   reloj: { visible: true },
   temporizador: {
@@ -284,6 +286,10 @@ let pantallaRetorno = {
   // client/src/logos.js; "nombre"/"pais" son overrides de texto libre
   // opcionales (si están vacíos, se usa el nombre/país del logo elegido).
   marca: { logoId: "asambleas-de-dios", nombre: "", pais: "" },
+  // Integración con Holyrics. "disposicion": "completa" (Holyrics ocupa
+  // toda la pantalla, con una franja chica de cronómetro/hora) o
+  // "dividida" (Holyrics arriba, tarjetas del monitor abajo).
+  holyrics: { activo: false, url: "", disposicion: "completa" },
   actualizadoPor: null,
   hora: null,
 };
@@ -292,6 +298,35 @@ let pantallaRetorno = {
 // conectados. Sirve para que el Emisor sepa cuántos monitores reales
 // están mirando lo que manda, en vez de mandar "a ciegas".
 const receptoresRetorno = new Set();
+
+// Valida lo que llega del Emisor para la integración con Holyrics: solo se
+// aceptan enlaces http/https (nada de javascript:, data:, etc.) y una
+// disposición conocida. Si la URL no es válida, se descarta y se conserva
+// la anterior.
+function combinarHolyrics(actual, nuevo) {
+  const resultado = { ...actual };
+  if (typeof nuevo.activo === "boolean") resultado.activo = nuevo.activo;
+  if (nuevo.disposicion === "completa" || nuevo.disposicion === "dividida") {
+    resultado.disposicion = nuevo.disposicion;
+  }
+  if (typeof nuevo.url === "string") {
+    const limpia = nuevo.url.trim().slice(0, 500);
+    if (limpia === "") {
+      resultado.url = "";
+      resultado.activo = false;
+    } else {
+      try {
+        const u = new URL(limpia);
+        if (u.protocol === "http:" || u.protocol === "https:") {
+          resultado.url = u.toString();
+        }
+      } catch {
+        /* URL inválida: se ignora */
+      }
+    }
+  }
+  return resultado;
+}
 
 io.on("connection", (socket) => {
   console.log(`Cliente conectado: ${socket.id} (usuario: ${socket.usuario})`);
@@ -508,6 +543,9 @@ io.on("connection", (socket) => {
         : {}),
       ...(datos.marca
         ? { marca: { ...pantallaRetorno.marca, ...datos.marca } }
+        : {}),
+      ...(datos.holyrics && typeof datos.holyrics === "object"
+        ? { holyrics: combinarHolyrics(pantallaRetorno.holyrics, datos.holyrics) }
         : {}),
       actualizadoPor: datos.de || socket.usuario || "Pantalla",
       hora: Date.now(),

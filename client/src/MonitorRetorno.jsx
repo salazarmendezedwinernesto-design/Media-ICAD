@@ -25,7 +25,7 @@ import { buscarLogo } from "./logos";
  * No maneja sockets ni estado propio -- todo le llega por props desde
  * PantallaRetorno.jsx, que es quien sabe hablar con el servidor.
  */
-export default function MonitorRetorno({
+function TarjetasMonitor({
   estado,
   horaActual,
   segundosVista,
@@ -193,6 +193,184 @@ export default function MonitorRetorno({
     </div>
   );
 }
+
+/**
+ * MonitorRetorno (punto de entrada)
+ * ---------------------------------------------------------------------
+ * Decide qué dibujar según si el Emisor activó la integración con
+ * Holyrics:
+ *
+ *   - Sin Holyrics -> solo las tarjetas de siempre (TarjetasMonitor).
+ *   - Holyrics "completa"  -> la salida web de Holyrics ocupa TODA la
+ *     pantalla (letras, versículos, imágenes, videos) y encima, abajo,
+ *     una franja delgada con cronómetro, hora y mensaje.
+ *   - Holyrics "dividida" -> Holyrics arriba y las tarjetas abajo.
+ *
+ * El contenido de Holyrics se carga directo desde Holyrics en un iframe
+ * (no pasa por nuestro servidor), por eso la latencia es la de la red
+ * local. En la vista previa del Emisor NO se carga el iframe real para
+ * no abrir una segunda conexión contra Holyrics: se muestra un aviso.
+ */
+export default function MonitorRetorno(props) {
+  const { estado, modoPreview = false } = props;
+  const holy = estado.holyrics;
+  const usarHolyrics = !!(holy && holy.activo && holy.url);
+
+  if (!usarHolyrics) return <TarjetasMonitor {...props} />;
+
+  const completa = holy.disposicion !== "dividida";
+
+  const marco = modoPreview ? (
+    <div style={estilosHoly.avisoPreview}>
+      <span style={{ fontSize: "clamp(1rem, 12cqh, 2.2rem)" }}>📖</span>
+      <span style={{ fontSize: "clamp(0.6rem, 6cqh, 1rem)", fontWeight: 700 }}>
+        HOLYRICS EN VIVO
+      </span>
+      <span style={{ fontSize: "clamp(0.5rem, 4.5cqh, 0.8rem)", opacity: 0.7 }}>
+        {completa ? "Pantalla completa" : "Pantalla dividida"}
+      </span>
+    </div>
+  ) : (
+    <iframe
+      key={holy.url}
+      src={holy.url}
+      title="Holyrics"
+      allow="autoplay; fullscreen"
+      referrerPolicy="no-referrer"
+      style={estilosHoly.iframe}
+    />
+  );
+
+  if (!completa) {
+    return (
+      <div style={estilosHoly.columna(modoPreview)}>
+        <div style={estilosHoly.zonaHolyrics}>{marco}</div>
+        <div style={estilosHoly.zonaTarjetas}>
+          <TarjetasMonitor {...props} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={estilosHoly.columna(modoPreview)}>
+      <div style={estilosHoly.zonaHolyrics}>{marco}</div>
+      <FranjaInferior {...props} />
+    </div>
+  );
+}
+
+// Franja delgada (cronómetro + hora + mensaje) que acompaña a Holyrics a
+// pantalla completa, para no perder el control de tiempos en tarima.
+function FranjaInferior({
+  estado,
+  horaActual,
+  segundosVista,
+  tiempoCumplido,
+  enAlerta,
+  modoPreview = false,
+}) {
+  const colorAcento = estado.estilo?.colorAcento || "#f59e0b";
+  const mostrarTemporizador =
+    estado.temporizador.activo || estado.temporizador.restanteAlPausar !== null;
+  const color = tiempoCumplido ? "#ef4444" : enAlerta ? "#f97316" : colorAcento;
+  const mensaje =
+    estado.mensaje.visible && estado.mensaje.texto ? estado.mensaje.texto : "";
+  const u = modoPreview ? "cqh" : "vh";
+
+  return (
+    <div style={estilosHoly.franja(modoPreview)}>
+      <span
+        style={{
+          fontWeight: 800,
+          fontVariantNumeric: "tabular-nums",
+          fontSize: `clamp(0.7rem, ${modoPreview ? 9 : 5}${u}, 2.6rem)`,
+          color: mostrarTemporizador ? color : "#3f4756",
+          animation: tiempoCumplido
+            ? "retornoParpadeoFuerte 0.6s steps(1) infinite"
+            : enAlerta
+              ? "retornoParpadeoSuave 1s ease-in-out infinite"
+              : "none",
+        }}
+      >
+        ⏱ {mostrarTemporizador ? formatearDuracion(Math.abs(segundosVista)) : "00:00"}
+      </span>
+      <span
+        style={{
+          flex: 1,
+          textAlign: "center",
+          fontWeight: 700,
+          color: "#fff",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          fontSize: `clamp(0.65rem, ${modoPreview ? 7 : 4}${u}, 2rem)`,
+        }}
+      >
+        {mensaje}
+      </span>
+      {estado.reloj.visible && (
+        <span
+          style={{
+            color: "#e5e7eb",
+            fontVariantNumeric: "tabular-nums",
+            fontSize: `clamp(0.65rem, ${modoPreview ? 7 : 4}${u}, 2rem)`,
+          }}
+        >
+          {formatearReloj(horaActual)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+const estilosHoly = {
+  columna: (preview) => ({
+    width: "100%",
+    height: preview ? "100%" : undefined,
+    flex: preview ? undefined : "1 1 auto",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    backgroundColor: "#000",
+    containerType: preview ? "size" : undefined,
+  }),
+  zonaHolyrics: { flex: "3 1 0", minHeight: 0, position: "relative" },
+  zonaTarjetas: {
+    flex: "2 1 0",
+    minHeight: 0,
+    display: "flex",
+    overflow: "hidden",
+  },
+  iframe: {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    border: "none",
+    backgroundColor: "#000",
+  },
+  avisoPreview: {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "4px",
+    color: "#fff",
+    background: "linear-gradient(135deg,#111827,#000)",
+  },
+  franja: (preview) => ({
+    flex: "0 0 auto",
+    display: "flex",
+    alignItems: "center",
+    gap: "16px",
+    padding: preview ? "1.5% 3%" : "10px 24px",
+    backgroundColor: "rgba(5,7,12,0.95)",
+    borderTop: "1.5px solid rgba(255,255,255,0.85)",
+  }),
+};
 
 function IconoIglesia({ size = 20, color = "#67e8f9" }) {
   return (

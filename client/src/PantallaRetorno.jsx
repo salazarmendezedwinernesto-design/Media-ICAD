@@ -195,6 +195,7 @@ function PantallaRetornoEmisor({ alSalir }) {
     nota: { texto: "" },
     estilo: { colorAcento: "#f59e0b", tamano: "grande" },
     marca: { logoId: "asambleas-de-dios", nombre: "", pais: "" },
+    holyrics: { activo: false, url: "", disposicion: "completa" },
   });
 
   const estadoRef = useRef(estado);
@@ -205,6 +206,7 @@ function PantallaRetornoEmisor({ alSalir }) {
   const [minutosInput, setMinutosInput] = useState(5);
   const [avisoInput, setAvisoInput] = useState(30);
   const [textoMensaje, setTextoMensaje] = useState("");
+  const [urlHolyricsInput, setUrlHolyricsInput] = useState("");
   const [segundosVista, setSegundosVista] = useState(0);
   const [confirmacion, setConfirmacion] = useState("");
   const [conectado, setConectado] = useState(true);
@@ -238,6 +240,7 @@ function PantallaRetornoEmisor({ alSalir }) {
       setTextoNota(datos.nota?.texto || "");
       setNombreMarcaInput(datos.marca?.nombre || "");
       setPaisMarcaInput(datos.marca?.pais || "");
+      setUrlHolyricsInput(datos.holyrics?.url || "");
     });
 
     socket.on("retorno:conteoReceptores", (n) => setConteoReceptores(n));
@@ -376,6 +379,23 @@ function PantallaRetornoEmisor({ alSalir }) {
 
   const cambiarTamano = (id) => {
     enviar({ estilo: { tamano: id } });
+  };
+
+  // --- Holyrics -----------------------------------------------------
+  const guardarUrlHolyrics = (e) => {
+    e?.preventDefault();
+    const url = urlHolyricsInput.trim();
+    // Al pegar un enlace nuevo se activa de inmediato; si se deja vacío
+    // el servidor lo desactiva.
+    enviar({ holyrics: { url, activo: url !== "" } });
+  };
+
+  const toggleHolyrics = () => {
+    enviar({ holyrics: { activo: !estado.holyrics?.activo } });
+  };
+
+  const cambiarDisposicionHolyrics = (disposicion) => {
+    enviar({ holyrics: { disposicion } });
   };
 
   // --- Marca / Logo -------------------------------------------------
@@ -719,6 +739,68 @@ function PantallaRetornoEmisor({ alSalir }) {
               </div>
             </form>
           </section>
+          {/* HOLYRICS */}
+          <section style={estilosEmisor.tarjeta}>
+            <div style={estilosEmisor.filaTitulo}>
+              <span style={estilosEmisor.tituloTarjeta}>
+                📖 HOLYRICS (letras, versículos, imágenes y videos)
+              </span>
+              <button
+                type="button"
+                style={{
+                  ...estilosEmisor.btnToggle,
+                  backgroundColor: estado.holyrics?.activo
+                    ? "#16a34a"
+                    : "#374151",
+                }}
+                onClick={toggleHolyrics}
+                disabled={!estado.holyrics?.url}
+              >
+                {estado.holyrics?.activo ? "ACTIVO" : "APAGADO"}
+              </button>
+            </div>
+            <form onSubmit={guardarUrlHolyrics} style={estilosEmisor.formMensaje}>
+              <input
+                type="url"
+                value={urlHolyricsInput}
+                onChange={(e) => setUrlHolyricsInput(e.target.value)}
+                placeholder="Pega aquí el enlace de salida web de Holyrics"
+                style={estilosEmisor.inputTexto}
+              />
+              <div style={estilosEmisor.filaBotonesTemporizador}>
+                <button type="submit" style={estilosEmisor.btnAccion}>
+                  🔗 Conectar y mostrar
+                </button>
+              </div>
+            </form>
+            <div style={estilosEmisor.filaBotonesTemporizador}>
+              {[
+                { id: "completa", etiqueta: "Pantalla completa" },
+                { id: "dividida", etiqueta: "Dividida" },
+              ].map((op) => (
+                <button
+                  key={op.id}
+                  type="button"
+                  style={{
+                    ...estilosEmisor.btnAccion,
+                    backgroundColor:
+                      (estado.holyrics?.disposicion || "completa") === op.id
+                        ? "#2563eb"
+                        : "#374151",
+                  }}
+                  onClick={() => cambiarDisposicionHolyrics(op.id)}
+                >
+                  {op.etiqueta}
+                </button>
+              ))}
+            </div>
+            <span style={estilosEmisor.etiquetaChica}>
+              El contenido llega directo desde Holyrics al monitor, sin pasar
+              por el servidor. El monitor y Holyrics deben poder verse en la
+              misma red.
+            </span>
+          </section>
+
           {/* APARIENCIA DEL MONITOR */}
           <section style={estilosEmisor.tarjeta}>
             <span style={estilosEmisor.tituloTarjeta}>

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { SERVER_URL } from "./config";
+import { SERVER_URL, MEDIAMTX_WHEP_URL } from "./config";
 import { obtenerToken, borrarToken } from "./services/auth";
 import MonitorRetorno from "./MonitorRetorno";
 import { LOGOS } from "./logos";
@@ -31,6 +31,14 @@ function guardarPresetsEnDisco(lista) {
 }
 
 const SOCKET_URL = SERVER_URL;
+
+// Propone la ruta WHEP de Holyrics a partir de la del moderador: misma
+// dirección del túnel, pero con la ruta "holyrics" en vez de la clave de
+// la transmisión. Ej: https://x.trycloudflare.com/canaan2026/whep ->
+// https://x.trycloudflare.com/holyrics/whep
+function whepHolyricsSugerida() {
+  return (MEDIAMTX_WHEP_URL || "").replace(/\/[^/]+\/whep\/?$/, "/holyrics/whep");
+}
 
 // Paleta de colores de acento para el monitor de escenario. Colores
 // saturados y de alto contraste sobre fondo negro, pensados para verse
@@ -195,7 +203,13 @@ function PantallaRetornoEmisor({ alSalir }) {
     nota: { texto: "" },
     estilo: { colorAcento: "#f59e0b", tamano: "grande" },
     marca: { logoId: "asambleas-de-dios", nombre: "", pais: "" },
-    holyrics: { activo: false, url: "", disposicion: "completa" },
+    holyrics: {
+      activo: false,
+      url: "",
+      disposicion: "completa",
+      fuente: "enlace",
+      whepUrl: "",
+    },
   });
 
   const estadoRef = useRef(estado);
@@ -207,6 +221,7 @@ function PantallaRetornoEmisor({ alSalir }) {
   const [avisoInput, setAvisoInput] = useState(30);
   const [textoMensaje, setTextoMensaje] = useState("");
   const [urlHolyricsInput, setUrlHolyricsInput] = useState("");
+  const [whepHolyricsInput, setWhepHolyricsInput] = useState("");
   const [segundosVista, setSegundosVista] = useState(0);
   const [confirmacion, setConfirmacion] = useState("");
   const [conectado, setConectado] = useState(true);
@@ -241,6 +256,9 @@ function PantallaRetornoEmisor({ alSalir }) {
       setNombreMarcaInput(datos.marca?.nombre || "");
       setPaisMarcaInput(datos.marca?.pais || "");
       setUrlHolyricsInput(datos.holyrics?.url || "");
+      setWhepHolyricsInput(
+        datos.holyrics?.whepUrl || whepHolyricsSugerida(),
+      );
     });
 
     socket.on("retorno:conteoReceptores", (n) => setConteoReceptores(n));
@@ -392,6 +410,21 @@ function PantallaRetornoEmisor({ alSalir }) {
 
   const toggleHolyrics = () => {
     enviar({ holyrics: { activo: !estado.holyrics?.activo } });
+  };
+
+  const cambiarFuenteHolyrics = (fuente) => {
+    enviar({ holyrics: { fuente } });
+  };
+
+  const guardarWhepHolyrics = (e) => {
+    e?.preventDefault();
+    enviar({
+      holyrics: {
+        whepUrl: whepHolyricsInput.trim(),
+        fuente: "video",
+        activo: whepHolyricsInput.trim() !== "",
+      },
+    });
   };
 
   const cambiarDisposicionHolyrics = (disposicion) => {
@@ -754,25 +787,74 @@ function PantallaRetornoEmisor({ alSalir }) {
                     : "#374151",
                 }}
                 onClick={toggleHolyrics}
-                disabled={!estado.holyrics?.url}
+                disabled={
+                  estado.holyrics?.fuente === "video"
+                    ? !estado.holyrics?.whepUrl
+                    : !estado.holyrics?.url
+                }
               >
                 {estado.holyrics?.activo ? "ACTIVO" : "APAGADO"}
               </button>
             </div>
-            <form onSubmit={guardarUrlHolyrics} style={estilosEmisor.formMensaje}>
-              <input
-                type="url"
-                value={urlHolyricsInput}
-                onChange={(e) => setUrlHolyricsInput(e.target.value)}
-                placeholder="Pega aquí el enlace de salida web de Holyrics"
-                style={estilosEmisor.inputTexto}
-              />
-              <div style={estilosEmisor.filaBotonesTemporizador}>
-                <button type="submit" style={estilosEmisor.btnAccion}>
-                  🔗 Conectar y mostrar
+            <div style={estilosEmisor.filaBotonesTemporizador}>
+              {[
+                { id: "video", etiqueta: "🎥 Video de pantalla (todo)" },
+                { id: "enlace", etiqueta: "🔗 Enlace web" },
+              ].map((op) => (
+                <button
+                  key={op.id}
+                  type="button"
+                  style={{
+                    ...estilosEmisor.btnAccion,
+                    backgroundColor:
+                      (estado.holyrics?.fuente || "enlace") === op.id
+                        ? "#2563eb"
+                        : "#374151",
+                  }}
+                  onClick={() => cambiarFuenteHolyrics(op.id)}
+                >
+                  {op.etiqueta}
                 </button>
-              </div>
-            </form>
+              ))}
+            </div>
+
+            {(estado.holyrics?.fuente || "enlace") === "video" ? (
+              <form
+                onSubmit={guardarWhepHolyrics}
+                style={estilosEmisor.formMensaje}
+              >
+                <input
+                  type="url"
+                  value={whepHolyricsInput}
+                  onChange={(e) => setWhepHolyricsInput(e.target.value)}
+                  placeholder="https://TU-TUNEL.trycloudflare.com/holyrics/whep"
+                  style={estilosEmisor.inputTexto}
+                />
+                <div style={estilosEmisor.filaBotonesTemporizador}>
+                  <button type="submit" style={estilosEmisor.btnAccion}>
+                    🎥 Conectar y mostrar
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form
+                onSubmit={guardarUrlHolyrics}
+                style={estilosEmisor.formMensaje}
+              >
+                <input
+                  type="url"
+                  value={urlHolyricsInput}
+                  onChange={(e) => setUrlHolyricsInput(e.target.value)}
+                  placeholder="Pega aquí el enlace de salida web de Holyrics"
+                  style={estilosEmisor.inputTexto}
+                />
+                <div style={estilosEmisor.filaBotonesTemporizador}>
+                  <button type="submit" style={estilosEmisor.btnAccion}>
+                    🔗 Conectar y mostrar
+                  </button>
+                </div>
+              </form>
+            )}
             <div style={estilosEmisor.filaBotonesTemporizador}>
               {[
                 { id: "completa", etiqueta: "Pantalla completa" },
@@ -795,9 +877,9 @@ function PantallaRetornoEmisor({ alSalir }) {
               ))}
             </div>
             <span style={estilosEmisor.etiquetaChica}>
-              El contenido llega directo desde Holyrics al monitor, sin pasar
-              por el servidor. El monitor y Holyrics deben poder verse en la
-              misma red.
+              Video: muestra la pantalla pública de Holyrics tal cual (letras,
+              versículos, imágenes y videos) y funciona por internet. Enlace:
+              solo texto e imágenes, y requiere ver Holyrics en la misma red.
             </span>
           </section>
 

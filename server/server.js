@@ -289,7 +289,16 @@ let pantallaRetorno = {
   // Integración con Holyrics. "disposicion": "completa" (Holyrics ocupa
   // toda la pantalla, con una franja chica de cronómetro/hora) o
   // "dividida" (Holyrics arriba, tarjetas del monitor abajo).
-  holyrics: { activo: false, url: "", disposicion: "completa" },
+  // "fuente": "enlace" (iframe con la salida web de Holyrics: letras,
+  // versículos, imágenes) | "video" (pantalla pública de Holyrics capturada
+  // y enviada a MediaMTX; trae TODO, incluidos los videos).
+  holyrics: {
+    activo: false,
+    url: "",
+    disposicion: "completa",
+    fuente: "enlace",
+    whepUrl: "",
+  },
   actualizadoPor: null,
   hora: null,
 };
@@ -309,11 +318,29 @@ function combinarHolyrics(actual, nuevo) {
   if (nuevo.disposicion === "completa" || nuevo.disposicion === "dividida") {
     resultado.disposicion = nuevo.disposicion;
   }
+  if (nuevo.fuente === "enlace" || nuevo.fuente === "video") {
+    resultado.fuente = nuevo.fuente;
+  }
+  if (typeof nuevo.whepUrl === "string") {
+    const w = nuevo.whepUrl.trim().slice(0, 500);
+    if (w === "") {
+      resultado.whepUrl = "";
+    } else {
+      try {
+        const u = new URL(w);
+        if (u.protocol === "http:" || u.protocol === "https:") {
+          resultado.whepUrl = u.toString();
+        }
+      } catch {
+        /* URL inválida: se ignora */
+      }
+    }
+  }
   if (typeof nuevo.url === "string") {
     const limpia = nuevo.url.trim().slice(0, 500);
     if (limpia === "") {
       resultado.url = "";
-      resultado.activo = false;
+      if (resultado.fuente === "enlace") resultado.activo = false;
     } else {
       try {
         const u = new URL(limpia);

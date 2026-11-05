@@ -1,5 +1,6 @@
 import React from "react";
 import { buscarLogo } from "./logos";
+import LiveStream from "./LiveStream";
 
 /**
  * MonitorRetorno
@@ -214,7 +215,12 @@ function TarjetasMonitor({
 export default function MonitorRetorno(props) {
   const { estado, modoPreview = false } = props;
   const holy = estado.holyrics;
-  const usarHolyrics = !!(holy && holy.activo && holy.url);
+  const esVideo = holy?.fuente === "video";
+  const usarHolyrics = !!(
+    holy &&
+    holy.activo &&
+    (esVideo ? holy.whepUrl : holy.url)
+  );
 
   if (!usarHolyrics) return <TarjetasMonitor {...props} />;
 
@@ -227,8 +233,20 @@ export default function MonitorRetorno(props) {
         HOLYRICS EN VIVO
       </span>
       <span style={{ fontSize: "clamp(0.5rem, 4.5cqh, 0.8rem)", opacity: 0.7 }}>
+        {esVideo ? "Video · " : "Enlace · "}
         {completa ? "Pantalla completa" : "Pantalla dividida"}
       </span>
+    </div>
+  ) : esVideo ? (
+    <div style={estilosHoly.iframe}>
+      <LiveStream
+        key={holy.whepUrl}
+        whepUrl={holy.whepUrl}
+        alto="100%"
+        controles={false}
+        silenciado
+        redondeado={false}
+      />
     </div>
   ) : (
     <iframe

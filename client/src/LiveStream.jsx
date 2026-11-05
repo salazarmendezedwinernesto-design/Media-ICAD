@@ -17,7 +17,14 @@ import React, { useEffect, useRef, useState } from "react";
  *  - whepUrl: URL completa del endpoint WHEP (ver client/src/config.js)
  *  - alto: alto CSS del contenedor
  */
-export default function LiveStream({ whepUrl, alto = "100%" }) {
+export default function LiveStream({
+  whepUrl,
+  alto = "100%",
+  controles = true,
+  silenciado = false,
+  redondeado = true,
+  ajuste = "contain",
+}) {
   const videoRef = useRef(null);
   const pcRef = useRef(null);
   const [estado, setEstado] = useState("conectando"); // conectando | en-vivo | error | sin-senal
@@ -91,16 +98,23 @@ export default function LiveStream({ whepUrl, alto = "100%" }) {
   }, [whepUrl]);
 
   return (
-    <div style={{ ...styles.contenedor, height: alto }}>
+    <div
+      style={{
+        ...styles.contenedor,
+        height: alto,
+        borderRadius: redondeado ? "10px" : 0,
+      }}
+    >
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        controls
+        controls={controles}
+        muted={silenciado}
         style={{
           width: "100%",
           height: "100%",
-          objectFit: "contain",
+          objectFit: ajuste,
           display: estado === "en-vivo" ? "block" : "none",
         }}
       />

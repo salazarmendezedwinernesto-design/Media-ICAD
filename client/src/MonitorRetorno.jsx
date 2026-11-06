@@ -249,14 +249,21 @@ export default function MonitorRetorno(props) {
       />
     </div>
   ) : (
-    <iframe
-      key={holy.url}
-      src={holy.url}
-      title="Holyrics"
-      allow="autoplay; fullscreen"
-      referrerPolicy="no-referrer"
-      style={estilosHoly.iframe}
-    />
+    // El iframe se dibuja dentro de un lienzo con la proporción real de la
+    // vista de Holyrics (16:9 o 4:3), centrado y con bandas negras si sobra
+    // espacio. Así las imágenes ya no se estiran para llenar la zona.
+    <div style={estilosHoly.lienzo}>
+      <div style={estilosHoly.cajaProporcion(relacionDeVista(holy.url))}>
+        <iframe
+          key={holy.url}
+          src={holy.url}
+          title="Holyrics"
+          allow="autoplay; fullscreen"
+          referrerPolicy="no-referrer"
+          style={estilosHoly.iframeCaja}
+        />
+      </div>
+    </div>
   );
 
   if (!completa) {
@@ -342,7 +349,38 @@ function FranjaInferior({
   );
 }
 
+// Proporción (ancho/alto) de la vista web de Holyrics según su enlace:
+// "/view/standard" es 4:3; todo lo demás (widescreen, text...) se toma 16:9.
+function relacionDeVista(url) {
+  return /\/view\/standard/i.test(url || "") ? 4 / 3 : 16 / 9;
+}
+
 const estilosHoly = {
+  // Contenedor que mide su propio tamaño (container queries) para poder
+  // calcular la caja más grande que cabe con la proporción pedida.
+  lienzo: {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#000",
+    containerType: "size",
+    overflow: "hidden",
+  },
+  cajaProporcion: (r) => ({
+    width: `min(100cqw, calc(100cqh * ${r}))`,
+    height: `min(100cqh, calc(100cqw / ${r}))`,
+    position: "relative",
+  }),
+  iframeCaja: {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    border: "none",
+    backgroundColor: "#000",
+  },
   columna: (preview) => ({
     width: "100%",
     height: preview ? "100%" : undefined,

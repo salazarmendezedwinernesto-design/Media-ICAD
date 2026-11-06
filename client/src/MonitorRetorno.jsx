@@ -300,6 +300,16 @@ function FranjaInferior({
   tiempoCumplido,
   enAlerta,
 }) {
+  const llenar = AJUSTE_HOLYRICS === "llenar";
+  // Unidad de medida: alto de la pantalla (llenar) o ancho del bloque
+  // (ajustar). Asi la franja escala igual en cualquier pantalla.
+  const u = llenar ? "cqh" : "cqw";
+  const k = llenar ? 1.55 : 1;
+  const px = (n) =>
+    llenar
+      ? `min(${(n * k).toFixed(2)}cqh, ${(n * 1.1).toFixed(2)}cqw)`
+      : `${n.toFixed(2)}cqw`;
+
   const colorAcento = estado.estilo?.colorAcento || "#f59e0b";
   const hayTemporizador =
     estado.temporizador.activo || estado.temporizador.restanteAlPausar !== null;
@@ -313,42 +323,42 @@ function FranjaInferior({
       ? "retornoParpadeoSuave 1s ease-in-out infinite"
       : "none";
 
-  // Todas las medidas usan "cqw" (% del ancho del bloque), asi la franja
-  // escala igual que la imagen de Holyrics en cualquier pantalla.
   return (
     <div
       style={{
-        flex: "1 1 0",
+        flex: llenar ? `0 0 ${alturaFranjaPantalla}cqh` : "1 1 0",
         minHeight: 0,
         width: "100%",
         boxSizing: "border-box",
         display: "grid",
-        gridTemplateColumns: "1fr 1.6fr 1fr",
+        gridTemplateColumns: "auto minmax(0, 1fr) auto",
         alignItems: "center",
         columnGap: "2cqw",
         padding: "0 2.4cqw",
         background: "linear-gradient(180deg,#0d111c 0%,#05070c 100%)",
-        borderTop: `0.2cqw solid ${color}`,
+        borderTop: `0.2${u} solid ${color}`,
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
         <span
           style={{
-            fontSize: "1.15cqw",
+            fontSize: px(1.15),
             fontWeight: 700,
             letterSpacing: "0.14em",
             textTransform: "uppercase",
+            whiteSpace: "nowrap",
             color: "#7d8899",
-            marginBottom: "0.5cqw",
+            marginBottom: px(0.5),
           }}
         >
           Tiempo restante
         </span>
         <span
           style={{
-            fontSize: "5cqw",
+            fontSize: px(5),
             fontWeight: 900,
             fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
             color: hayTemporizador ? color : "#3f4756",
             animation: hayTemporizador ? animacion : "none",
           }}
@@ -360,7 +370,7 @@ function FranjaInferior({
       <div
         style={{
           textAlign: "center",
-          fontSize: "3.3cqw",
+          fontSize: px(3.3),
           fontWeight: 800,
           lineHeight: 1.15,
           color: tiempoCumplido ? "#ef4444" : "#ffffff",
@@ -388,9 +398,10 @@ function FranjaInferior({
           <>
             <span
               style={{
-                fontSize: "3.6cqw",
+                fontSize: px(3.6),
                 fontWeight: 800,
                 fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
                 color: "#f1f5f9",
               }}
             >
@@ -398,10 +409,11 @@ function FranjaInferior({
             </span>
             <span
               style={{
-                fontSize: "1.3cqw",
+                fontSize: px(1.3),
                 fontWeight: 600,
+                whiteSpace: "nowrap",
                 color: "#9ca3af",
-                marginTop: "0.6cqw",
+                marginTop: px(0.6),
               }}
             >
               {formatearFecha(horaActual)}
@@ -414,6 +426,7 @@ function FranjaInferior({
 }
 
 
+
 // Proporción (ancho/alto) de la vista web de Holyrics según su enlace:
 // "/view/standard" es 4:3; todo lo demás (widescreen, text...) se toma 16:9.
 function relacionDeVista(url) {
@@ -422,26 +435,53 @@ function relacionDeVista(url) {
 
 // Alto de la franja inferior como fraccion del ANCHO del bloque (0.09 = 9%).
 // Subelo para una franja mas alta, bajalo para una mas delgada.
+// "llenar"  = la vista de Holyrics ocupa TODA la pantalla (sin margenes
+//             negros) y se reajusta a cualquier tamano.
+// "ajustar" = conserva la proporcion exacta 16:9 / 4:3 con bandas negras.
+const AJUSTE_HOLYRICS = "llenar";
+// Alto de la franja inferior en modo "llenar", como % del alto de pantalla.
+const alturaFranjaPantalla = 14;
+
+// Alto de la franja en modo "ajustar" (fraccion del ancho).
 const alturaFranja = 0.09;
 
 const estilosHoly = {
   // Imagen de Holyrics + franja, pegadas, con el mismo ancho. Se centra y
   // ocupa lo maximo que quepa en pantalla.
-  bloque: (r) => ({
-    width: `min(100cqw, calc(100cqh / ${1 / r + alturaFranja}))`,
-    aspectRatio: `1 / ${1 / r + alturaFranja}`,
-    containerType: "inline-size",
-    display: "flex",
-    flexDirection: "column",
-    backgroundColor: "#000",
-  }),
-  areaContenido: (r) => ({
-    position: "relative",
-    width: "100%",
-    aspectRatio: `${r}`,
-    flex: "none",
-    backgroundColor: "#000",
-  }),
+  bloque: (r) =>
+    AJUSTE_HOLYRICS === "llenar"
+      ? {
+          width: "100%",
+          height: "100%",
+          containerType: "size",
+          display: "flex",
+          flexDirection: "column",
+          backgroundColor: "#000",
+        }
+      : {
+          width: `min(100cqw, calc(100cqh / ${1 / r + alturaFranja}))`,
+          aspectRatio: `1 / ${1 / r + alturaFranja}`,
+          containerType: "inline-size",
+          display: "flex",
+          flexDirection: "column",
+          backgroundColor: "#000",
+        },
+  areaContenido: (r) =>
+    AJUSTE_HOLYRICS === "llenar"
+      ? {
+          position: "relative",
+          width: "100%",
+          flex: "1 1 0",
+          minHeight: 0,
+          backgroundColor: "#000",
+        }
+      : {
+          position: "relative",
+          width: "100%",
+          aspectRatio: `${r}`,
+          flex: "none",
+          backgroundColor: "#000",
+        },
   // Contenedor que mide su propio tamaño (container queries) para poder
   // calcular la caja más grande que cabe con la proporción pedida.
   lienzo: {
@@ -454,11 +494,14 @@ const estilosHoly = {
     containerType: "size",
     overflow: "hidden",
   },
-  cajaProporcion: (r) => ({
-    width: `min(100cqw, calc(100cqh * ${r}))`,
-    height: `min(100cqh, calc(100cqw / ${r}))`,
-    position: "relative",
-  }),
+  cajaProporcion: (r) =>
+    AJUSTE_HOLYRICS === "llenar"
+      ? { width: "100%", height: "100%", position: "relative" }
+      : {
+          width: `min(100cqw, calc(100cqh * ${r}))`,
+          height: `min(100cqh, calc(100cqw / ${r}))`,
+          position: "relative",
+        },
   iframeCaja: {
     position: "absolute",
     inset: 0,

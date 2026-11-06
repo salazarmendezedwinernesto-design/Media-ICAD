@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 require("dotenv").config();
+const persistencia = require("./persistencia");
 
 const app = express();
 const httpServer = createServer(app);
@@ -308,6 +309,38 @@ let pantallaRetorno = {
 // están mirando lo que manda, en vez de mandar "a ciegas".
 const receptoresRetorno = new Set();
 
+// Tiempos programados (presets de contador con nombre). Antes vivían solo
+// en el localStorage de cada navegador; ahora los guarda el servidor y se
+// reparten a todos los dispositivos del Emisor.
+let presetsRetorno = [];
+
+function guardarEstadoRetorno() {
+  persistencia.guardar({ pantallaRetorno, presetsRetorno });
+}
+
+// Recupera lo guardado la última vez (estado de la pantalla + presets).
+persistencia.cargar().then((datos) => {
+  if (!datos) return;
+  if (datos.pantallaRetorno) {
+    pantallaRetorno = {
+      ...pantallaRetorno,
+      ...datos.pantallaRetorno,
+      reloj: { ...pantallaRetorno.reloj, ...datos.pantallaRetorno.reloj },
+      temporizador: {
+        ...pantallaRetorno.temporizador,
+        ...datos.pantallaRetorno.temporizador,
+      },
+      mensaje: { ...pantallaRetorno.mensaje, ...datos.pantallaRetorno.mensaje },
+      nota: { ...pantallaRetorno.nota, ...datos.pantallaRetorno.nota },
+      estilo: { ...pantallaRetorno.estilo, ...datos.pantallaRetorno.estilo },
+      marca: { ...pantallaRetorno.marca, ...datos.pantallaRetorno.marca },
+      holyrics: { ...pantallaRetorno.holyrics, ...datos.pantallaRetorno.holyrics },
+    };
+  }
+  if (Array.isArray(datos.presetsRetorno)) presetsRetorno = datos.presetsRetorno;
+  console.log("Estado de Pantalla de Retorno restaurado");
+});
+
 // Valida lo que llega del Emisor para la integración con Holyrics: solo se
 // aceptan enlaces http/https (nada de javascript:, data:, etc.) y una
 // disposición conocida. Si la URL no es válida, se descarta y se conserva
@@ -381,6 +414,7 @@ io.on("connection", (socket) => {
   // que se conecta tarde (o recarga la página) vea de inmediato lo que
   // ya estaba activo, en vez de quedarse en blanco hasta el próximo cambio.
   socket.emit("retorno:estado", pantallaRetorno);
+  socket.emit("retorno:presets", presetsRetorno);
 
   // Le manda al que se acaba de conectar cuántos Receptores (monitores de
   // escenario) hay activos en este momento, para que el Emisor no arranque
@@ -579,6 +613,26 @@ io.on("connection", (socket) => {
     };
 
     io.emit("retorno:estado", pantallaRetorno);
+    guardarEstadoRetorno();
+  });
+
+  // --- Tiempos programados compartidos entre dispositivos ---
+  socket.on("retorno:presets:agregar", (datos) => {
+    const nombre = String(datos?.nombre || "").trim().slice(0, 60);
+    const minutos = Math.max(1, Math.round(Number(datos?.minutos)) || 1);
+    if (!nombre || presetsRetorno.length >= 50) return;
+    presetsRetorno = [
+      ...presetsRetorno,
+      { id: `${Date.now()}${Math.floor(Math.random() * 1000)}`, nombre, minutos },
+    ];
+    io.emit("retorno:presets", presetsRetorno);
+    guardarEstadoRetorno();
+  });
+
+  socket.on("retorno:presets:eliminar", (id) => {
+    presetsRetorno = presetsRetorno.filter((p) => p.id !== String(id));
+    io.emit("retorno:presets", presetsRetorno);
+    guardarEstadoRetorno();
   });
 
   socket.on("disconnect", (motivo) => {

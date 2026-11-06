@@ -5,31 +5,6 @@ import { obtenerToken, borrarToken } from "./services/auth";
 import MonitorRetorno from "./MonitorRetorno";
 import { LOGOS } from "./logos";
 
-// Los "tiempos programados" (presets de contador con nombre) se guardan
-// solo en el navegador del Emisor -- son un atajo personal del operador,
-// no hace falta sincronizarlos con el servidor ni con el Receptor.
-const CLAVE_PRESETS = "retorno_presets_tiempos_v1";
-
-function cargarPresetsGuardados() {
-  try {
-    const bruto = localStorage.getItem(CLAVE_PRESETS);
-    const lista = bruto ? JSON.parse(bruto) : [];
-    return Array.isArray(lista) ? lista : [];
-  } catch {
-    return [];
-  }
-}
-
-function guardarPresetsEnDisco(lista) {
-  try {
-    localStorage.setItem(CLAVE_PRESETS, JSON.stringify(lista));
-  } catch {
-    // Si el navegador bloquea localStorage (modo privado, etc.), los
-    // tiempos programados simplemente no persisten entre sesiones -- no
-    // es un error grave, el resto del panel sigue funcionando normal.
-  }
-}
-
 const SOCKET_URL = SERVER_URL;
 
 // Propone la ruta WHEP de Holyrics a partir de la del moderador: misma
@@ -230,7 +205,7 @@ function PantallaRetornoEmisor({ alSalir }) {
 
   // Tiempos programados (presets de contador con nombre), guardados en
   // este navegador.
-  const [presets, setPresets] = useState(() => cargarPresetsGuardados());
+  const [presets, setPresets] = useState([]);
   const [presetNombreInput, setPresetNombreInput] = useState("");
   const [presetMinutosInput, setPresetMinutosInput] = useState(10);
 
@@ -262,6 +237,12 @@ function PantallaRetornoEmisor({ alSalir }) {
     });
 
     socket.on("retorno:conteoReceptores", (n) => setConteoReceptores(n));
+
+    // Tiempos programados compartidos: llegan del servidor, así se ven
+    // iguales en todos los dispositivos.
+    socket.on("retorno:presets", (lista) => {
+      if (Array.isArray(lista)) setPresets(lista);
+    });
 
     return () => socket.disconnect();
   }, []);
@@ -441,17 +422,12 @@ function PantallaRetornoEmisor({ alSalir }) {
     const nombre = presetNombreInput.trim();
     if (!nombre) return;
     const minutos = Math.max(1, Math.round(Number(presetMinutosInput)) || 1);
-    const nuevo = { id: `${Date.now()}`, nombre, minutos };
-    const lista = [...presets, nuevo];
-    setPresets(lista);
-    guardarPresetsEnDisco(lista);
+    socketRef.current?.emit("retorno:presets:agregar", { nombre, minutos });
     setPresetNombreInput("");
   };
 
   const eliminarPreset = (id) => {
-    const lista = presets.filter((p) => p.id !== id);
-    setPresets(lista);
-    guardarPresetsEnDisco(lista);
+    socketRef.current?.emit("retorno:presets:eliminar", id);
   };
 
   const iniciarPreset = (preset) => {

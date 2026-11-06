@@ -277,10 +277,16 @@ export default function MonitorRetorno(props) {
     );
   }
 
+  const relacion = esVideo ? 16 / 9 : relacionDeVista(holy.url);
+
   return (
     <div style={estilosHoly.columna(modoPreview)}>
-      <div style={estilosHoly.zonaHolyrics}>{marco}</div>
-      <FranjaInferior {...props} />
+      <div style={estilosHoly.lienzo}>
+        <div style={estilosHoly.bloque(relacion)}>
+          <div style={estilosHoly.areaContenido(relacion)}>{marco}</div>
+          <FranjaInferior {...props} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -293,61 +299,120 @@ function FranjaInferior({
   segundosVista,
   tiempoCumplido,
   enAlerta,
-  modoPreview = false,
 }) {
   const colorAcento = estado.estilo?.colorAcento || "#f59e0b";
-  const mostrarTemporizador =
+  const hayTemporizador =
     estado.temporizador.activo || estado.temporizador.restanteAlPausar !== null;
   const color = tiempoCumplido ? "#ef4444" : enAlerta ? "#f97316" : colorAcento;
   const mensaje =
     estado.mensaje.visible && estado.mensaje.texto ? estado.mensaje.texto : "";
-  const u = modoPreview ? "cqh" : "vh";
+  const textoCentral = tiempoCumplido ? "TIEMPO CUMPLIDO" : mensaje;
+  const animacion = tiempoCumplido
+    ? "retornoParpadeoFuerte 0.6s steps(1) infinite"
+    : enAlerta
+      ? "retornoParpadeoSuave 1s ease-in-out infinite"
+      : "none";
 
+  // Todas las medidas usan "cqw" (% del ancho del bloque), asi la franja
+  // escala igual que la imagen de Holyrics en cualquier pantalla.
   return (
-    <div style={estilosHoly.franja(modoPreview)}>
-      <span
-        style={{
-          fontWeight: 800,
-          fontVariantNumeric: "tabular-nums",
-          fontSize: `clamp(0.7rem, ${modoPreview ? 9 : 5}${u}, 2.6rem)`,
-          color: mostrarTemporizador ? color : "#3f4756",
-          animation: tiempoCumplido
-            ? "retornoParpadeoFuerte 0.6s steps(1) infinite"
-            : enAlerta
-              ? "retornoParpadeoSuave 1s ease-in-out infinite"
-              : "none",
-        }}
-      >
-        ⏱ {mostrarTemporizador ? formatearDuracion(Math.abs(segundosVista)) : "00:00"}
-      </span>
-      <span
-        style={{
-          flex: 1,
-          textAlign: "center",
-          fontWeight: 700,
-          color: "#fff",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          fontSize: `clamp(0.65rem, ${modoPreview ? 7 : 4}${u}, 2rem)`,
-        }}
-      >
-        {mensaje}
-      </span>
-      {estado.reloj.visible && (
+    <div
+      style={{
+        flex: "1 1 0",
+        minHeight: 0,
+        width: "100%",
+        boxSizing: "border-box",
+        display: "grid",
+        gridTemplateColumns: "1fr 1.6fr 1fr",
+        alignItems: "center",
+        columnGap: "2cqw",
+        padding: "0 2.4cqw",
+        background: "linear-gradient(180deg,#0d111c 0%,#05070c 100%)",
+        borderTop: `0.2cqw solid ${color}`,
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
         <span
           style={{
-            color: "#e5e7eb",
-            fontVariantNumeric: "tabular-nums",
-            fontSize: `clamp(0.65rem, ${modoPreview ? 7 : 4}${u}, 2rem)`,
+            fontSize: "1.15cqw",
+            fontWeight: 700,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            color: "#7d8899",
+            marginBottom: "0.5cqw",
           }}
         >
-          {formatearReloj(horaActual)}
+          Tiempo restante
         </span>
-      )}
+        <span
+          style={{
+            fontSize: "5cqw",
+            fontWeight: 900,
+            fontVariantNumeric: "tabular-nums",
+            color: hayTemporizador ? color : "#3f4756",
+            animation: hayTemporizador ? animacion : "none",
+          }}
+        >
+          {hayTemporizador ? formatearDuracion(Math.abs(segundosVista)) : "00:00"}
+        </span>
+      </div>
+
+      <div
+        style={{
+          textAlign: "center",
+          fontSize: "3.3cqw",
+          fontWeight: 800,
+          lineHeight: 1.15,
+          color: tiempoCumplido ? "#ef4444" : "#ffffff",
+          letterSpacing: tiempoCumplido ? "0.08em" : "normal",
+          animation: tiempoCumplido ? animacion : "none",
+          overflow: "hidden",
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          wordBreak: "break-word",
+        }}
+      >
+        {textoCentral}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          lineHeight: 1,
+        }}
+      >
+        {estado.reloj.visible && (
+          <>
+            <span
+              style={{
+                fontSize: "3.6cqw",
+                fontWeight: 800,
+                fontVariantNumeric: "tabular-nums",
+                color: "#f1f5f9",
+              }}
+            >
+              {formatearReloj(horaActual)}
+            </span>
+            <span
+              style={{
+                fontSize: "1.3cqw",
+                fontWeight: 600,
+                color: "#9ca3af",
+                marginTop: "0.6cqw",
+              }}
+            >
+              {formatearFecha(horaActual)}
+            </span>
+          </>
+        )}
+      </div>
     </div>
   );
 }
+
 
 // Proporción (ancho/alto) de la vista web de Holyrics según su enlace:
 // "/view/standard" es 4:3; todo lo demás (widescreen, text...) se toma 16:9.
@@ -355,7 +420,28 @@ function relacionDeVista(url) {
   return /\/view\/standard/i.test(url || "") ? 4 / 3 : 16 / 9;
 }
 
+// Alto de la franja inferior como fraccion del ANCHO del bloque (0.09 = 9%).
+// Subelo para una franja mas alta, bajalo para una mas delgada.
+const alturaFranja = 0.09;
+
 const estilosHoly = {
+  // Imagen de Holyrics + franja, pegadas, con el mismo ancho. Se centra y
+  // ocupa lo maximo que quepa en pantalla.
+  bloque: (r) => ({
+    width: `min(100cqw, calc(100cqh / ${1 / r + alturaFranja}))`,
+    aspectRatio: `1 / ${1 / r + alturaFranja}`,
+    containerType: "inline-size",
+    display: "flex",
+    flexDirection: "column",
+    backgroundColor: "#000",
+  }),
+  areaContenido: (r) => ({
+    position: "relative",
+    width: "100%",
+    aspectRatio: `${r}`,
+    flex: "none",
+    backgroundColor: "#000",
+  }),
   // Contenedor que mide su propio tamaño (container queries) para poder
   // calcular la caja más grande que cabe con la proporción pedida.
   lienzo: {

@@ -1145,7 +1145,7 @@ function PantallaRetornoReceptor({ alSalir }) {
         </div>
       )}
 
-      {tiempoCumplido && (
+      {tiempoCumplido && !estado.holyrics?.activo && (
         <div style={estilosReceptor.avisoCumplidoTexto}>TIEMPO CUMPLIDO</div>
       )}
     </div>
